@@ -1,0 +1,14 @@
+# Memory graph node for john at Swift daemon — bentos-vmm-macos
+agent: john
+scope: Swift daemon — bentos-vmm-macos
+session: 1
+updated: 2026-03-25
+
+edges:
+  episodic:
+    - session-state.md: 1.0
+
+  semantic: []
+
+  prospective:
+    - next-actions.md: 1.0
