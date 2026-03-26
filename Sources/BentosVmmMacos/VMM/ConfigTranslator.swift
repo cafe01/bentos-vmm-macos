@@ -72,16 +72,15 @@ enum ConfigTranslator {
         }
         vzConfig.networkDevices = networkDevices
 
-        // Console: create FileHandle pair BEFORE VM creation (VZ.fw requirement)
+        // Console: VZVirtioConsoleDeviceSerialPortConfiguration maps to hvc0 in Linux.
+        // Must use serialPorts (not consoleDevices) for the kernel to see it.
         let consoleIO = ConsoleIO()
-        let consoleDevice = VZVirtioConsoleDeviceConfiguration()
-        let serialPort = VZVirtioConsolePortConfiguration()
+        let serialPort = VZVirtioConsoleDeviceSerialPortConfiguration()
         serialPort.attachment = VZFileHandleSerialPortAttachment(
             fileHandleForReading: consoleIO.guestInput,
             fileHandleForWriting: consoleIO.guestOutput
         )
-        consoleDevice.ports[0] = serialPort
-        vzConfig.consoleDevices = [consoleDevice]
+        vzConfig.serialPorts = [serialPort]
 
         // Entropy
         if config.enableEntropy {

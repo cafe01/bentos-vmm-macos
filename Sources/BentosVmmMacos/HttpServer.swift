@@ -68,7 +68,11 @@ final class HttpServer: @unchecked Sendable {
                 let upgradeConfig: NIOHTTPServerUpgradeSendableConfiguration = (
                     upgraders: [wsUpgrader],
                     completionHandler: { ctx in
-                        // HTTP handlers removed by upgrade mechanism
+                        // Remove HttpHandler after WebSocket upgrade — it would
+                        // misinterpret raw WS frames as HTTP otherwise.
+                        ctx.pipeline.context(handlerType: HttpHandler.self).whenSuccess { httpCtx in
+                            try? ctx.pipeline.syncOperations.removeHandler(context: httpCtx)
+                        }
                     }
                 )
                 return channel.pipeline.configureHTTPServerPipeline(

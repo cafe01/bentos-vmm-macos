@@ -2,7 +2,7 @@
 
 > Implementor: John (SWE)
 > Owner: Cafe (CTO) + Alfred (CPO/COO)
-> Status: ALL MILESTONES COMPLETE — M0+M1+M3+M4+M5 (121 tests, S308-S309). 24/24 subtasks.
+> Status: ALL MILESTONES COMPLETE + E2E VALIDATED — M0+M1+M3+M4+M5 (121 tests, S308-S309). 24/24 subtasks. First VM boot achieved S309.
 
 One deliverable: the bentos-vmm-macos Swift daemon — an HTTP API over Unix socket wrapping Apple's Virtualization.framework. Goal: `POST /api/v1/machines` + `POST .../start` boots a real Linux VM on Apple Silicon.
 
@@ -208,6 +208,11 @@ VZ.fw integration. From `POST .../start` to a running Linux guest.
   - **Tests**: delegate callback transitions state correctly; error populates MachineError with message
 
 **Milestone validation**: `curl POST .../machines` + `curl POST .../start` -> kernel boots. `curl GET .../machines/{id}` returns `"state":"running"`. `curl POST .../stop` -> state returns to stopped. Full lifecycle via HTTP.
+
+> **E2E validated S309**: Linux 6.12.77 (aarch64) boots to Alpine 3.21 login prompt via REST API. Two bugs fixed during validation:
+> 1. `serialPorts` not `consoleDevices` — `VZVirtioConsoleDeviceSerialPortConfiguration` via `vzConfig.serialPorts` is the correct API for `hvc0` console.
+> 2. `HttpHandler` removal on WS upgrade — NIO's upgrade mechanism doesn't remove custom handlers added after the codec, causing crash on console connect.
+> Initramfs required: kernel has `virtio_blk`, `ext4`, `crc32c`, `libcrc32c` as modules (`=m`). Built minimal busybox initramfs as workaround. Follow-up: rebuild kernel with these as `=y` or add initramfs to distro build.
 
 ### M4: Console + Events (interactive access)
 

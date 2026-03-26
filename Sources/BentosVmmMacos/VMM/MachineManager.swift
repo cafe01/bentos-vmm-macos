@@ -112,6 +112,7 @@ final class MachineManager {
             machine.delegate = delegate
             machine.consoleIO = consoleIO
             transition(id, &machine, to: .running)
+
         } catch let apiErr as VmmApiError {
             machine.error = MachineError(code: apiErr.code, message: apiErr.message)
             transition(id, &machine, to: .error)

@@ -1,38 +1,39 @@
-# Session State — S309 shipped M4+M5 (all milestones complete)
+# Session State — S309 E2E validated: first VM boot
 
-## What Shipped This Session (S309)
-- M4.1 (Console WebSocket): NIOWebSocketServerUpgrader in pipeline, ConsoleHandler bridges
-  WebSocket frames <-> ConsoleIO FileHandle pair. One connection per machine (409 if occupied).
-  Acquire/release tracked in ManagedMachine.consoleConnected.
-- M4.2 (SSE Events): EventBus per machine (AsyncStream-based broadcast). SSEHandler writes
-  long-lived text/event-stream response. State transitions emit via MachineManager.transition()
-  helper. MachineDelegate also emits on guestDidStop/didStopWithError.
-- M5.1 (Create Snapshot): pause+saveMachineStateTo+resume. Saves to snapshots/{snapId}/state.vzsave.
-  Returns BentosSnapshot JSON. Optional name in request body.
-- M5.2 (Restore Snapshot): machine must be stopped. Rebuilds VZ config, restoreMachineStateFrom.
-  Transitions stopped -> starting -> paused.
-- M5.3 (List Snapshots): enumerates snapshots/ dir, returns sorted by creation time.
-- M5.4 (Delete Snapshot): removes snapshot directory, returns 204.
-- 121 tests passing (was 91 at start of S309). +30 new tests.
+## What Happened This Head (john-vmm-swift-05, S309)
+First VM boot — end-to-end validation of the Swift daemon with real kernel + rootfs.
+
+### Two bugs fixed
+1. **ConfigTranslator.swift** — Console used `vzConfig.consoleDevices` with
+   `VZVirtioConsoleDeviceConfiguration`. This does NOT map to `hvc0` in Linux.
+   Fixed: use `vzConfig.serialPorts` with `VZVirtioConsoleDeviceSerialPortConfiguration`.
+   This is the correct VZ API for Linux serial console (`hvc0`).
+
+2. **HttpServer.swift** — After NIO WebSocket upgrade, `HttpHandler` remained in the
+   pipeline (NIO only removes the codec + upgrade handler, not custom handlers added
+   via `.flatMap`). Raw WebSocket frames hit `HttpHandler` -> fatal error.
+   Fixed: remove `HttpHandler` in the upgrade `completionHandler`.
+
+### Initramfs workaround
+The distro kernel has critical drivers as modules:
+- `CONFIG_VIRTIO_BLK=m` (can't access root disk)
+- `CONFIG_EXT4_FS=m` (can't mount root filesystem)
+- `CONFIG_CRYPTO_CRC32C=m`, `CONFIG_LIBCRC32C=m` (ext4 dependency)
+
+Built a minimal initramfs (~7MB) with Docker-sourced busybox (ARM64 static) + these
+modules. Loads in order: virtio_blk, crc32c_generic, libcrc32c, crc16, mbcache, jbd2, ext4.
+Then mounts /dev/vda and switch_root to real init.
+
+### Boot result
+Linux 6.12.77 (aarch64) boots to Alpine Linux 3.21 login prompt.
+OpenRC starts all services (syslog, sshd). Console works via WebSocket.
+Network fails (virtio_net=m not in initramfs) — expected, non-blocking.
 
 ## Cumulative State (S307-S309)
-- M0 (skeleton): 5/5 subtasks
-- M1 (CRUD): 4/4 subtasks
-- M3 (boot): 9/9 subtasks
-- M4 (console+events): 2/2 subtasks
-- M5 (snapshots): 4/4 subtasks
-- Total: 24/24 subtasks. ALL COMPLETE. No 501 stubs remain.
+- M0-M5: 24/24 subtasks complete. 121 tests.
+- E2E: validated. VM boots, reaches login prompt, console bidirectional.
+- Two production bugs found and fixed during validation.
 
-## Architecture
-- Sources/BentosVmmMacos/ — main.swift, HttpServer.swift, HttpHandler.swift
-- Sources/BentosVmmMacos/Server/ — Router.swift, ConsoleHandler.swift, SSEHandler.swift
-- Sources/BentosVmmMacos/Model/ — Types.swift, Errors.swift
-- Sources/BentosVmmMacos/Persistence/ — MachineStore.swift, DiskManager.swift
-- Sources/BentosVmmMacos/VMM/ — ConfigTranslator.swift, MachineManager.swift,
-  ManagedMachine.swift, StateMapper.swift, MachineDelegate.swift, EventBus.swift
+## Architecture (unchanged)
+- Sources/BentosVmmMacos/ — 16 Swift files across 4 directories
 - Tests/BentosVmmMacosTests/ — 15 test files, 121 tests
-
-## Key Decisions
-- M4: NIOWebSocketServerUpgrader at pipeline level, EventBus @MainActor, transition() helper
-- M5: Snapshot save pauses VM, saves state file, resumes. Restore rebuilds VZ config from scratch.
-  Snapshot metadata derived from filesystem (no separate metadata file). snapshotNotFound error added.

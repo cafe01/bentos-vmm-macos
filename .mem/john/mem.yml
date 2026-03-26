@@ -8,7 +8,8 @@ edges:
   episodic:
     - session-state.md: 1.0
 
-  semantic: []
+  semantic:
+    - e2e-learnings.md: 0.9
 
   prospective:
-    - next-actions.md: 1.0
+    - next-actions.md: 0.8
