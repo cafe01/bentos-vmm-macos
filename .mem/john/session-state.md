@@ -1,4 +1,4 @@
-# Session State — S309 shipped M4 (Console + Events)
+# Session State — S309 shipped M4+M5 (all milestones complete)
 
 ## What Shipped This Session (S309)
 - M4.1 (Console WebSocket): NIOWebSocketServerUpgrader in pipeline, ConsoleHandler bridges
@@ -7,14 +7,21 @@
 - M4.2 (SSE Events): EventBus per machine (AsyncStream-based broadcast). SSEHandler writes
   long-lived text/event-stream response. State transitions emit via MachineManager.transition()
   helper. MachineDelegate also emits on guestDidStop/didStopWithError.
-- 105 tests passing (was 91). +14 new tests across EventBusTests, ConsoleTests, SSETests.
+- M5.1 (Create Snapshot): pause+saveMachineStateTo+resume. Saves to snapshots/{snapId}/state.vzsave.
+  Returns BentosSnapshot JSON. Optional name in request body.
+- M5.2 (Restore Snapshot): machine must be stopped. Rebuilds VZ config, restoreMachineStateFrom.
+  Transitions stopped -> starting -> paused.
+- M5.3 (List Snapshots): enumerates snapshots/ dir, returns sorted by creation time.
+- M5.4 (Delete Snapshot): removes snapshot directory, returns 204.
+- 121 tests passing (was 91 at start of S309). +30 new tests.
 
 ## Cumulative State (S307-S309)
 - M0 (skeleton): 5/5 subtasks
 - M1 (CRUD): 4/4 subtasks
 - M3 (boot): 9/9 subtasks
 - M4 (console+events): 2/2 subtasks
-- Total: 20/24 subtasks. Only M5 (snapshots, 4 subtasks) remains.
+- M5 (snapshots): 4/4 subtasks
+- Total: 24/24 subtasks. ALL COMPLETE. No 501 stubs remain.
 
 ## Architecture
 - Sources/BentosVmmMacos/ — main.swift, HttpServer.swift, HttpHandler.swift
@@ -23,14 +30,9 @@
 - Sources/BentosVmmMacos/Persistence/ — MachineStore.swift, DiskManager.swift
 - Sources/BentosVmmMacos/VMM/ — ConfigTranslator.swift, MachineManager.swift,
   ManagedMachine.swift, StateMapper.swift, MachineDelegate.swift, EventBus.swift
-- Tests/BentosVmmMacosTests/ — 14 test files, 105 tests
+- Tests/BentosVmmMacosTests/ — 15 test files, 121 tests
 
-## Key Decisions (M4)
-- NIOWebSocketServerUpgrader integrated at pipeline level via configureHTTPServerPipeline(withServerUpgrade:)
-- Console path check in shouldUpgrade callback (pure path matching)
-- SSE uses NIOAny wrapping of HTTPServerResponsePart directly (no dedicated channel handler)
-- EventBus is @MainActor, same isolation as MachineManager
-- MachineManager.transition() helper centralizes state change + event emission
-
-## What's Still 501 Stubs
-- All snapshot endpoints (M5.1-M5.4)
+## Key Decisions
+- M4: NIOWebSocketServerUpgrader at pipeline level, EventBus @MainActor, transition() helper
+- M5: Snapshot save pauses VM, saves state file, resumes. Restore rebuilds VZ config from scratch.
+  Snapshot metadata derived from filesystem (no separate metadata file). snapshotNotFound error added.

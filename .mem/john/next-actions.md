@@ -1,22 +1,13 @@
 # Next Actions
 
-## Immediate: M5 — Snapshots
-### M5.1 — Create snapshot
-- POST .../snapshots -> vm.pause(), saveMachineStateTo(url), vm.resume()
-- Save to machines/{id}/snapshots/{snapId}/state.vzsave
-- Return BentosSnapshot JSON with size from file
+## Head A Plan: COMPLETE
+All 24/24 subtasks across M0, M1, M3, M4, M5 are done. 121 tests passing.
+No 501 stubs remain. The Swift daemon implements the full Dart contract.
 
-### M5.2 — Restore snapshot
-- POST .../snapshots/{sid}/restore -> machine must be stopped
-- Rebuild VZ config, restoreMachineStateFrom(url)
+## What Remains Outside Head A
+- End-to-end validation requires M2 artifacts (kernel + rootfs from lib/bentos_distro/)
+- Dart CLI (lib/bentos_vmm/) — separate deliverable per TACTICAL_PLAN.md
+- Items listed under "What's Explicitly Deferred" in TACTICAL_PLAN.md
 
-### M5.3 — List snapshots
-- GET .../snapshots -> enumerate snapshot directories
-
-### M5.4 — Delete snapshot
-- DELETE .../snapshots/{sid} -> remove snapshot directory
-
-## After M5
-- All milestones complete. Head A's plan is done.
-- End-to-end validation needs M2 artifacts (kernel + rootfs).
-- Contract source of truth: lib/bentos_vmm/lib/src/
+## Standing By
+Awaiting next direction from Alfred/Cafe.

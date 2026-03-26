@@ -2,7 +2,7 @@
 
 > Implementor: John (SWE)
 > Owner: Cafe (CTO) + Alfred (CPO/COO)
-> Status: M0+M1+M3+M4 complete (105 tests, S308-S309). Next: M5 (Snapshots).
+> Status: ALL MILESTONES COMPLETE — M0+M1+M3+M4+M5 (121 tests, S308-S309). 24/24 subtasks.
 
 One deliverable: the bentos-vmm-macos Swift daemon — an HTTP API over Unix socket wrapping Apple's Virtualization.framework. Goal: `POST /api/v1/machines` + `POST .../start` boots a real Linux VM on Apple Silicon.
 
@@ -233,22 +233,22 @@ VZ.fw integration. From `POST .../start` to a running Linux guest.
 
 ### M5: Snapshots
 
-- [ ] **M5.1** Create snapshot
+- [x] **M5.1** Create snapshot
   - `POST .../snapshots` -> `vm.pause()`, `saveMachineStateTo(url)`, `vm.resume()`
   - Save to `machines/{id}/snapshots/{snapId}/state.vzsave`
   - Return `BentosSnapshot` JSON with size from file
   - **Tests**: snapshot creates directory + state file; snapshot of stopped machine returns error; snapshot JSON has correct fields
 
-- [ ] **M5.2** Restore snapshot
+- [x] **M5.2** Restore snapshot
   - `POST .../snapshots/{sid}/restore` -> machine must be stopped
   - Rebuild VZ config, `VZVirtualMachine(configuration:)`, `restoreMachineStateFrom(url)`
   - **Tests**: restore from valid snapshot succeeds; restore on running machine returns error; restore from missing snapshot returns 404
 
-- [ ] **M5.3** List snapshots
+- [x] **M5.3** List snapshots
   - `GET .../snapshots` -> enumerate snapshot directories, return `{"snapshots":[...]}`
   - **Tests**: empty list for new machine; list after create shows snapshot; list after delete shows empty
 
-- [ ] **M5.4** Delete snapshot
+- [x] **M5.4** Delete snapshot
   - `DELETE .../snapshots/{sid}` -> remove snapshot directory
   - **Tests**: delete removes directory; delete unknown returns 404
 
