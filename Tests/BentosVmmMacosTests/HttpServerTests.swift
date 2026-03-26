@@ -110,22 +110,22 @@ struct HttpServerTests {
 
     // MARK: - M0.3: Stubs return 501
 
-    @Test func stubEndpointsReturn501() async throws {
+    @Test func snapshotEndpointsReturn404ForUnknownMachine() async throws {
         try await withTestServer { socketPath in
-            // Only truly unimplemented endpoints (snapshots)
-            let stubs: [(String, String)] = [
+            // Snapshot endpoints are now implemented — they return 404 for unknown machines
+            let endpoints: [(String, String)] = [
                 ("POST", "/api/v1/machines/test-id/snapshots"),
                 ("GET", "/api/v1/machines/test-id/snapshots"),
                 ("DELETE", "/api/v1/machines/test-id/snapshots/snap-1"),
                 ("POST", "/api/v1/machines/test-id/snapshots/snap-1/restore"),
             ]
-            for (method, path) in stubs {
+            for (method, path) in endpoints {
                 let (status, json) = try await httpRequest(
                     socketPath: socketPath, method: method, path: path)
-                #expect(status == 501,
-                        "\(method) \(path) should return 501, got \(status)")
-                #expect(json?["code"] as? String == "not_implemented",
-                        "\(method) \(path) should return not_implemented error code")
+                #expect(status == 404,
+                        "\(method) \(path) should return 404, got \(status)")
+                #expect(json?["code"] as? String == "machine_not_found",
+                        "\(method) \(path) should return machine_not_found")
             }
         }
     }
@@ -262,6 +262,100 @@ struct HttpServerTests {
                 body: "not json".data(using: .utf8)!)
             #expect(status == 400)
             #expect(json?["code"] as? String == "bad_request")
+        }
+    }
+
+    // MARK: - M5: Snapshot HTTP endpoints
+
+    @Test func listSnapshotsForNewMachineReturnsEmpty() async throws {
+        try await withTestServer { socketPath in
+            let config = """
+            {"name":"snap-test","cpu_count":1,"memory_bytes":1073741824,
+             "boot":{"kernel":"k","command_line":"c"},
+             "disks":[{"role":"root","size_bytes":512,"read_only":false}],
+             "network":{"mode":"nat"},
+             "shared_directories":[],"enable_vsock":true,"enable_entropy":true,
+             "enable_balloon":true,"enable_rosetta":false}
+            """.data(using: .utf8)!
+
+            let (_, createJson) = try await httpRequest(
+                socketPath: socketPath, method: "POST", path: "/api/v1/machines", body: config)
+            let id = createJson!["id"] as! String
+
+            let (status, json) = try await httpGet(
+                socketPath: socketPath, path: "/api/v1/machines/\(id)/snapshots")
+            #expect(status == 200)
+            let snaps = json?["snapshots"] as? [Any]
+            #expect(snaps?.count == 0)
+        }
+    }
+
+    @Test func createSnapshotOnStoppedMachineReturns409() async throws {
+        try await withTestServer { socketPath in
+            let config = """
+            {"name":"snap-test","cpu_count":1,"memory_bytes":1073741824,
+             "boot":{"kernel":"k","command_line":"c"},
+             "disks":[{"role":"root","size_bytes":512,"read_only":false}],
+             "network":{"mode":"nat"},
+             "shared_directories":[],"enable_vsock":true,"enable_entropy":true,
+             "enable_balloon":true,"enable_rosetta":false}
+            """.data(using: .utf8)!
+
+            let (_, createJson) = try await httpRequest(
+                socketPath: socketPath, method: "POST", path: "/api/v1/machines", body: config)
+            let id = createJson!["id"] as! String
+
+            let (status, json) = try await httpRequest(
+                socketPath: socketPath, method: "POST",
+                path: "/api/v1/machines/\(id)/snapshots")
+            #expect(status == 409)
+            #expect(json?["code"] as? String == "conflict")
+        }
+    }
+
+    @Test func deleteSnapshotReturns404ForUnknownSnapshot() async throws {
+        try await withTestServer { socketPath in
+            let config = """
+            {"name":"snap-test","cpu_count":1,"memory_bytes":1073741824,
+             "boot":{"kernel":"k","command_line":"c"},
+             "disks":[{"role":"root","size_bytes":512,"read_only":false}],
+             "network":{"mode":"nat"},
+             "shared_directories":[],"enable_vsock":true,"enable_entropy":true,
+             "enable_balloon":true,"enable_rosetta":false}
+            """.data(using: .utf8)!
+
+            let (_, createJson) = try await httpRequest(
+                socketPath: socketPath, method: "POST", path: "/api/v1/machines", body: config)
+            let id = createJson!["id"] as! String
+
+            let (status, json) = try await httpRequest(
+                socketPath: socketPath, method: "DELETE",
+                path: "/api/v1/machines/\(id)/snapshots/nonexistent")
+            #expect(status == 404)
+            #expect(json?["code"] as? String == "snapshot_not_found")
+        }
+    }
+
+    @Test func restoreSnapshotOnStoppedReturns404ForMissingSnapshot() async throws {
+        try await withTestServer { socketPath in
+            let config = """
+            {"name":"snap-test","cpu_count":1,"memory_bytes":1073741824,
+             "boot":{"kernel":"k","command_line":"c"},
+             "disks":[{"role":"root","size_bytes":512,"read_only":false}],
+             "network":{"mode":"nat"},
+             "shared_directories":[],"enable_vsock":true,"enable_entropy":true,
+             "enable_balloon":true,"enable_rosetta":false}
+            """.data(using: .utf8)!
+
+            let (_, createJson) = try await httpRequest(
+                socketPath: socketPath, method: "POST", path: "/api/v1/machines", body: config)
+            let id = createJson!["id"] as! String
+
+            let (status, json) = try await httpRequest(
+                socketPath: socketPath, method: "POST",
+                path: "/api/v1/machines/\(id)/snapshots/fake-snap/restore")
+            #expect(status == 404)
+            #expect(json?["code"] as? String == "snapshot_not_found")
         }
     }
 

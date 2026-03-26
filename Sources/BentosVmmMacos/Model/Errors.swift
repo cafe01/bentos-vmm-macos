@@ -63,4 +63,11 @@ extension VmmApiError {
     static func internalError(_ msg: String) -> VmmApiError {
         VmmApiError(code: "internal_error", message: msg, status: .internalServerError)
     }
+
+    static func snapshotNotFound(_ machineId: String, _ snapshotId: String) -> VmmApiError {
+        VmmApiError(
+            code: "snapshot_not_found",
+            message: "No snapshot '\(snapshotId)' for machine '\(machineId)'",
+            status: .notFound)
+    }
 }

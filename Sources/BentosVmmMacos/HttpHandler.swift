@@ -153,14 +153,28 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
                 let result = try manager.resize(id, request: req)
                 return try encodable(.ok, result)
 
-            case .createSnapshot:
-                throw VmmApiError.notImplemented("POST /api/v1/machines/{id}/snapshots")
-            case .listSnapshots:
-                throw VmmApiError.notImplemented("GET /api/v1/machines/{id}/snapshots")
-            case .deleteSnapshot:
-                throw VmmApiError.notImplemented("DELETE /api/v1/machines/{id}/snapshots/{sid}")
-            case .restoreSnapshot:
-                throw VmmApiError.notImplemented("POST /api/v1/machines/{id}/snapshots/{sid}/restore")
+            case .createSnapshot(let id):
+                let snapReq: SnapshotRequest?
+                if !bodyBytes.isEmpty {
+                    snapReq = try? JSONDecoder.vmm.decode(SnapshotRequest.self, from: Data(bodyBytes))
+                } else {
+                    snapReq = nil
+                }
+                let snap = try await manager.createSnapshot(id, name: snapReq?.name)
+                return try encodable(.ok, snap)
+
+            case .listSnapshots(let id):
+                let snaps = try manager.listSnapshots(id)
+                return try encodable(.ok, SnapshotListResponse(snapshots: snaps))
+
+            case .deleteSnapshot(let machineId, let snapshotId):
+                try manager.deleteSnapshot(machineId, snapshotId: snapshotId)
+                return .noContent
+
+            case .restoreSnapshot(let machineId, let snapshotId):
+                try await manager.restoreSnapshot(machineId, snapshotId: snapshotId)
+                let machine = try manager.get(machineId)
+                return try encodable(.ok, machine.toBentosMachine())
             case .console(let id):
                 // WebSocket upgrade is handled by NIOWebSocketServerUpgrader in the pipeline.
                 // If we reach here, the client didn't send upgrade headers — reject.
@@ -311,7 +325,14 @@ struct StopRequest: Codable, Sendable {
     let force: Bool
 }
 
-struct EmptyResponse: Codable, Sendable {
+struct EmptyResponse: Codable, Sendable {}
+
+struct SnapshotRequest: Codable, Sendable {
+    let name: String?
+}
+
+struct SnapshotListResponse: Codable, Sendable {
+    let snapshots: [BentosSnapshot]
 }
 
 // MARK: - HTTPStatus reason phrases
