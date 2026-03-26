@@ -112,14 +112,12 @@ struct HttpServerTests {
 
     @Test func stubEndpointsReturn501() async throws {
         try await withTestServer { socketPath in
-            // Only truly unimplemented endpoints (snapshots, console, events)
+            // Only truly unimplemented endpoints (snapshots)
             let stubs: [(String, String)] = [
                 ("POST", "/api/v1/machines/test-id/snapshots"),
                 ("GET", "/api/v1/machines/test-id/snapshots"),
                 ("DELETE", "/api/v1/machines/test-id/snapshots/snap-1"),
                 ("POST", "/api/v1/machines/test-id/snapshots/snap-1/restore"),
-                ("GET", "/api/v1/machines/test-id/console"),
-                ("GET", "/api/v1/machines/test-id/events"),
             ]
             for (method, path) in stubs {
                 let (status, json) = try await httpRequest(

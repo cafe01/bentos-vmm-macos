@@ -2,7 +2,7 @@
 
 > Implementor: John (SWE)
 > Owner: Cafe (CTO) + Alfred (CPO/COO)
-> Status: Not started
+> Status: M0+M1+M3+M4 complete (105 tests, S308-S309). Next: M5 (Snapshots).
 
 One deliverable: the bentos-vmm-macos Swift daemon — an HTTP API over Unix socket wrapping Apple's Virtualization.framework. Goal: `POST /api/v1/machines` + `POST .../start` boots a real Linux VM on Apple Silicon.
 
@@ -55,31 +55,31 @@ The successor reads the nap checkpoint + runs `swift test` to verify green, then
 
 SwiftPM project compiles and responds to HTTP on a Unix socket.
 
-- [ ] **M0.1** Package.swift + entitlements.plist + main.swift
+- [x] **M0.1** Package.swift + entitlements.plist + main.swift
   - SwiftPM executable target `bentos-vmm-macos`
   - Dependencies: `swift-nio` (2.65+), `swift-nio-extras`
   - System framework: `Virtualization` (linked, not used yet)
   - `entitlements.plist`: `com.apple.security.virtualization: true`
   - **Test**: project compiles (`swift build` succeeds)
 
-- [ ] **M0.2** SwiftNIO HTTP server binds to Unix socket
+- [x] **M0.2** SwiftNIO HTTP server binds to Unix socket
   - `HttpServer` class: takes socket path, starts NIO `ServerBootstrap`
   - Default socket: `/tmp/bentos-vmm.sock`
   - Serves `GET /api/v1/vmm/ping` -> `{"healthy":true,"machine_count":0,"uptime_seconds":0}`
   - **Tests**: server starts on socket; ping returns 200 + correct JSON; connection refused when server not running
 
-- [ ] **M0.3** Router dispatches all 18 endpoints
+- [x] **M0.3** Router dispatches all 18 endpoints
   - Pattern-matching router (method + path segments), NOT a framework
   - All 18 endpoints registered. Unimplemented ones return 501 `{"code":"not_implemented","message":"..."}`
   - **Tests**: each endpoint returns correct status (501 for stubs, 200 for ping); unknown path returns 404; wrong method returns 405
 
-- [ ] **M0.4** Model types: Swift structs matching Dart `types.dart`
+- [x] **M0.4** Model types: Swift structs matching Dart `types.dart`
   - Every type in `types.dart` has a Swift mirror with `Codable` conformance
   - **snake_case** JSON keys via `CodingKeys` (Swift properties are camelCase, wire format is snake_case)
   - Sealed types use `"type"` discriminator: `NetworkConfig`, `ResizeResult`, `MachineEvent`
   - **Tests**: JSON round-trip for every type. Encode Swift struct -> JSON string -> decode back -> assert equal. Test against the EXACT JSON examples from the Dart `toJson()` output.
 
-- [ ] **M0.5** Error envelope: all non-2xx return `{"code":"...","message":"..."}`
+- [x] **M0.5** Error envelope: all non-2xx return `{"code":"...","message":"..."}`
   - `VmmApiError` struct with HTTP status mapping
   - Router wraps all handlers: any thrown error becomes the envelope
   - **Tests**: invalid JSON body -> 400 + error envelope; unknown machine ID -> 404 + error envelope
@@ -90,7 +90,7 @@ SwiftPM project compiles and responds to HTTP on a Unix socket.
 
 Create, list, get, delete machines with persisted config. No actual VMs — just state management.
 
-- [ ] **M1.1** MachineStore: filesystem persistence
+- [x] **M1.1** MachineStore: filesystem persistence
   - Path: `~/Library/Application Support/com.bentos.vmm-macos/machines/{id}/`
   - Write `config.json` (exact `BentosVmConfig` JSON — Dart wire format)
   - Create directory tree: `config.json`, `snapshots/`, `logs/`
@@ -98,14 +98,14 @@ Create, list, get, delete machines with persisted config. No actual VMs — just
   - Delete removes entire machine directory
   - **Tests**: write + read round-trips JSON exactly; load on fresh init returns empty; create then load returns the machine; delete then load returns empty; concurrent creates get distinct IDs
 
-- [ ] **M1.2** MachineManager: `@MainActor` machine registry
+- [x] **M1.2** MachineManager: `@MainActor` machine registry
   - `machines: [String: ManagedMachine]` dictionary
   - `ManagedMachine`: config + state + timestamps + optional VZ runtime (nil for now)
   - Methods: `create()`, `get()`, `list()`, `delete()`. All modify the dictionary + persist via MachineStore.
   - ID generation: UUID v4
   - **Tests**: create returns ManagedMachine in stopped state; get by ID works; list returns all; delete removes from dictionary; get after delete throws; create populates createdAt/updatedAt
 
-- [ ] **M1.3** Wire up HTTP handlers to MachineManager
+- [x] **M1.3** Wire up HTTP handlers to MachineManager
   - `POST /api/v1/machines` — parse `BentosVmConfig` JSON, call `manager.create()`, return `BentosMachine` JSON (state: stopped)
   - `GET /api/v1/machines` — return `{"machines": [...]}`
   - `GET /api/v1/machines/{id}` — return `BentosMachine` JSON
@@ -113,7 +113,7 @@ Create, list, get, delete machines with persisted config. No actual VMs — just
   - `GET /api/v1/vmm/capabilities` — return hardcoded macOS capabilities JSON
   - **Tests**: full HTTP round-trip via test client: POST create -> GET list (contains machine) -> GET by ID (matches) -> DELETE -> GET list (empty). Error cases: GET unknown ID -> 404; DELETE unknown -> 404; POST invalid JSON -> 400.
 
-- [ ] **M1.4** Restart persistence
+- [x] **M1.4** Restart persistence
   - On startup, MachineManager loads all machines from MachineStore
   - All loaded machines start in `stopped` state regardless of previous state
   - **Tests**: create machine via HTTP, restart server, list shows machine with state stopped
@@ -142,7 +142,7 @@ Either option unblocks M3. Head B should start with Option A to unblock fast, th
 
 VZ.fw integration. From `POST .../start` to a running Linux guest.
 
-- [ ] **M3.1** ConfigTranslator: `BentosVmConfig` JSON -> `VZVirtualMachineConfiguration`
+- [x] **M3.1** ConfigTranslator: `BentosVmConfig` JSON -> `VZVirtualMachineConfiguration`
   - `cpu_count` -> `config.cpuCount`
   - `memory_bytes` -> `config.memorySize`
   - `boot.kernel` -> `VZLinuxBootLoader(kernelURL:)` with `bundled://` resolution
@@ -160,13 +160,13 @@ VZ.fw integration. From `POST .../start` to a running Linux guest.
   - Call `config.validate()` before returning
   - **Tests**: build VZ config from known JSON input, assert cpuCount/memorySize/device counts match; assert validate() passes for valid configs; assert validate() throws for invalid configs (0 CPUs, too little memory); test `bundled://` path resolution; test each device flag (vsock, entropy, balloon) toggles the correct device presence
 
-- [ ] **M3.2** Disk image management
+- [x] **M3.2** Disk image management
   - On machine creation: copy golden rootfs to `machines/{id}/root.img`
   - Use APFS clonefile for instant copy (`copyfile()` with `COPYFILE_CLONE`)
   - If `DiskConfig.sizeBytes` > golden image size: expand with `truncate` + note that `resize2fs` runs inside guest on first boot
   - **Tests**: cloned file exists and has correct size; expanded file is larger than original; clone of missing golden image returns clear error
 
-- [ ] **M3.3** MachineManager.startMachine
+- [x] **M3.3** MachineManager.startMachine
   - Build `VZVirtualMachineConfiguration` from persisted config JSON via ConfigTranslator
   - `VZVirtualMachine(configuration:)` — on `@MainActor`
   - Set `VZVirtualMachineDelegate` for state callbacks
@@ -175,34 +175,34 @@ VZ.fw integration. From `POST .../start` to a running Linux guest.
   - Store `VZVirtualMachine` reference in `ManagedMachine`
   - **Tests**: start transitions state to running; start on already-running machine returns error; start with missing disk image returns error; state change events emitted in correct order
 
-- [ ] **M3.4** MachineManager.stopMachine
+- [x] **M3.4** MachineManager.stopMachine
   - `force: false` -> `vm.requestStop()` + 30s timeout, fallback to `vm.stop()`
   - `force: true` -> `vm.stop()` immediately
   - Update state: running -> stopping -> stopped
   - Nil out `VZVirtualMachine` reference
   - **Tests**: stop transitions state to stopped; force-stop skips graceful; stop on already-stopped machine returns error
 
-- [ ] **M3.5** MachineManager.pauseMachine / resumeMachine
+- [x] **M3.5** MachineManager.pauseMachine / resumeMachine
   - `vm.pause()` / `vm.resume()`
   - running <-> paused
   - **Tests**: pause transitions running -> paused; resume transitions paused -> running; pause on stopped machine returns error
 
-- [ ] **M3.6** `POST .../power-button`
+- [x] **M3.6** `POST .../power-button`
   - `vm.requestStop()` — ACPI signal only, no force, no timeout
   - **Test**: returns 200, does not force state change (guest may ignore)
 
-- [ ] **M3.7** `POST .../resize`
+- [x] **M3.7** `POST .../resize`
   - Always return `{"type":"restart_required","message":"Machine must be restarted for resize to take effect."}`
   - Save updated config to disk
   - VZ.fw cannot hotplug — this is correct behavior
   - **Tests**: resize returns restart_required; config on disk is updated; next start uses new config
 
-- [ ] **M3.8** StateMapper
+- [x] **M3.8** StateMapper
   - `VZVirtualMachine.state` enum -> BentOS `MachineState` string
   - `.stopped` -> `"stopped"`, `.running` -> `"running"`, `.paused` -> `"paused"`, `.starting` -> `"starting"`, `.stopping` -> `"stopping"`, `.error` -> `"error"`
   - **Tests**: every VZ state maps to correct string; unknown state handled gracefully
 
-- [ ] **M3.9** MachineDelegate
+- [x] **M3.9** MachineDelegate
   - `guestDidStop` -> state = stopped, nil out VM reference
   - `virtualMachine(_:didStopWithError:)` -> state = error, populate `MachineError`
   - **Tests**: delegate callback transitions state correctly; error populates MachineError with message
@@ -211,7 +211,7 @@ VZ.fw integration. From `POST .../start` to a running Linux guest.
 
 ### M4: Console + Events (interactive access)
 
-- [ ] **M4.1** Console WebSocket (`GET .../machines/{id}/console`)
+- [x] **M4.1** Console WebSocket (`GET .../machines/{id}/console`)
   - WebSocket upgrade via SwiftNIO `WebSocketUpgradeHandler`
   - Bridge WebSocket frames <-> VZ.fw virtio-console `FileHandle` pair
   - `VZFileHandleSerialPortAttachment` set at config time (M3.1) provides read/write FileHandles
@@ -221,7 +221,7 @@ VZ.fw integration. From `POST .../start` to a running Linux guest.
   - Multiple clients: only one console connection per machine at a time (return 409 if already connected)
   - **Tests**: WebSocket upgrade succeeds for running machine; fails for stopped machine (409); data written to WebSocket arrives at write handle; data from read handle arrives at WebSocket; disconnect cleans up handlers
 
-- [ ] **M4.2** SSE event stream (`GET .../machines/{id}/events`)
+- [x] **M4.2** SSE event stream (`GET .../machines/{id}/events`)
   - Long-lived HTTP response, `Content-Type: text/event-stream`
   - `AsyncStream<MachineEvent>` backed by delegate state changes
   - Each event: `data: {"type":"state_changed","previous_state":"stopped","new_state":"starting","timestamp":"..."}\n\n`

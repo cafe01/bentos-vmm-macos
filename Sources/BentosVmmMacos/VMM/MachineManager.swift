@@ -67,6 +67,18 @@ final class MachineManager {
         machines.removeValue(forKey: id)
     }
 
+    // MARK: - State transition helper
+
+    /// Transition machine state and emit event.
+    private func transition(_ id: String, _ machine: inout ManagedMachine, to newState: MachineState) {
+        let prev = machine.state
+        machine.state = newState
+        machine.updatedAt = Date()
+        machines[id] = machine
+        machine.eventBus.emit(.stateChanged(
+            timestamp: Date(), previousState: prev, newState: newState))
+    }
+
     // MARK: - VM Operations
 
     /// Start a stopped machine. Builds VZ config, creates VM, starts it.
@@ -81,10 +93,8 @@ final class MachineManager {
         let machineDir = store.machineDir(id)
 
         // Transition: stopped -> starting
-        machine.state = .starting
         machine.error = nil
-        machine.updatedAt = Date()
-        machines[id] = machine
+        transition(id, &machine, to: .starting)
 
         do {
             let (vzConfig, consoleIO) = try ConfigTranslator.translate(
@@ -97,24 +107,18 @@ final class MachineManager {
             try await unsafeVm.start()
 
             // Transition: starting -> running
-            machine.state = .running
             machine.startedAt = Date()
-            machine.updatedAt = Date()
             machine.vm = vm
             machine.delegate = delegate
             machine.consoleIO = consoleIO
-            machines[id] = machine
+            transition(id, &machine, to: .running)
         } catch let apiErr as VmmApiError {
-            machine.state = .error
             machine.error = MachineError(code: apiErr.code, message: apiErr.message)
-            machine.updatedAt = Date()
-            machines[id] = machine
+            transition(id, &machine, to: .error)
             throw apiErr
         } catch {
-            machine.state = .error
             machine.error = MachineError(code: "start_failed", message: error.localizedDescription)
-            machine.updatedAt = Date()
-            machines[id] = machine
+            transition(id, &machine, to: .error)
             throw VmmApiError(code: "start_failed", message: error.localizedDescription, status: .internalServerError)
         }
     }
@@ -132,9 +136,7 @@ final class MachineManager {
         }
 
         // Transition: running -> stopping
-        machine.state = .stopping
-        machine.updatedAt = Date()
-        machines[id] = machine
+        transition(id, &machine, to: .stopping)
 
         if force {
             try await vm.stop()
@@ -154,13 +156,12 @@ final class MachineManager {
 
         // Finalize
         machine = machines[id] ?? machine
-        machine.state = .stopped
         machine.vm = nil
         machine.delegate = nil
         machine.consoleIO = nil
+        machine.consoleConnected = false
         machine.startedAt = nil
-        machine.updatedAt = Date()
-        machines[id] = machine
+        transition(id, &machine, to: .stopped)
     }
 
     /// Pause a running machine.
@@ -176,9 +177,7 @@ final class MachineManager {
         }
 
         try await vm.pause()
-        machine.state = .paused
-        machine.updatedAt = Date()
-        machines[id] = machine
+        transition(id, &machine, to: .paused)
     }
 
     /// Resume a paused machine.
@@ -194,9 +193,7 @@ final class MachineManager {
         }
 
         try await vm.resume()
-        machine.state = .running
-        machine.updatedAt = Date()
-        machines[id] = machine
+        transition(id, &machine, to: .running)
     }
 
     /// Press power button (ACPI signal). Guest may ignore.
@@ -212,6 +209,46 @@ final class MachineManager {
         }
         try vm.requestStop()
     }
+
+    // MARK: - Console
+
+    /// Acquire console connection. Returns ConsoleIO or throws 409 if already connected.
+    func acquireConsole(_ id: String) throws -> ConsoleIO {
+        guard var machine = machines[id] else {
+            throw VmmApiError.machineNotFound(id)
+        }
+        guard machine.state == .running || machine.state == .paused else {
+            throw VmmApiError.conflict("Machine '\(id)' must be running for console (current state: \(machine.state))")
+        }
+        guard !machine.consoleConnected else {
+            throw VmmApiError.conflict("Console already connected to machine '\(id)'")
+        }
+        guard let consoleIO = machine.consoleIO else {
+            throw VmmApiError.internalError("Machine '\(id)' has no console I/O")
+        }
+        machine.consoleConnected = true
+        machines[id] = machine
+        return consoleIO
+    }
+
+    /// Release console connection.
+    func releaseConsole(_ id: String) {
+        guard var machine = machines[id] else { return }
+        machine.consoleConnected = false
+        machines[id] = machine
+    }
+
+    // MARK: - Events
+
+    /// Get the event bus for a machine (for SSE subscription).
+    func eventBus(for id: String) throws -> EventBus {
+        guard let machine = machines[id] else {
+            throw VmmApiError.machineNotFound(id)
+        }
+        return machine.eventBus
+    }
+
+    // MARK: - Resize
 
     /// Resize: save updated config, return restart_required.
     func resize(_ id: String, request: ResizeRequest) throws -> ResizeResult {

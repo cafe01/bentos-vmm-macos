@@ -2,6 +2,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOHTTP1
+import NIOWebSocket
 
 /// SwiftNIO HTTP server bound to a Unix domain socket.
 final class HttpServer: @unchecked Sendable {
@@ -20,10 +21,59 @@ final class HttpServer: @unchecked Sendable {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         let startTime = self.startTime
         let manager = self.manager
+
+        let wsUpgrader = NIOWebSocketServerUpgrader(
+            shouldUpgrade: { channel, head in
+                // Only upgrade console paths
+                let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? Substring(head.uri))
+                let segs = path.split(separator: "/").map(String.init)
+                // /api/v1/machines/{id}/console
+                if segs.count == 5,
+                   segs[0] == "api", segs[1] == "v1", segs[2] == "machines", segs[4] == "console" {
+                    return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
+                }
+                return channel.eventLoop.makeSucceededFuture(nil)
+            },
+            upgradePipelineHandler: { channel, head in
+                let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? Substring(head.uri))
+                let segs = path.split(separator: "/").map(String.init)
+                let machineId = segs[3]
+
+                // Acquire console on @MainActor, then add handler on event loop
+                let promise = channel.eventLoop.makePromise(of: Void.self)
+                Task { @MainActor in
+                    do {
+                        let consoleIO = try manager.acquireConsole(machineId)
+                        let handler = ConsoleHandler(
+                            machineId: machineId, consoleIO: consoleIO, manager: manager)
+                        channel.eventLoop.execute {
+                            channel.pipeline.addHandler(handler).whenComplete { result in
+                                switch result {
+                                case .success: promise.succeed(())
+                                case .failure(let err): promise.fail(err)
+                                }
+                            }
+                        }
+                    } catch {
+                        promise.fail(error)
+                    }
+                }
+                return promise.futureResult
+            }
+        )
+
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(.backlog, value: 256)
             .childChannelInitializer { channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap {
+                let upgradeConfig: NIOHTTPServerUpgradeSendableConfiguration = (
+                    upgraders: [wsUpgrader],
+                    completionHandler: { ctx in
+                        // HTTP handlers removed by upgrade mechanism
+                    }
+                )
+                return channel.pipeline.configureHTTPServerPipeline(
+                    withServerUpgrade: upgradeConfig
+                ).flatMap {
                     channel.pipeline.addHandler(
                         HttpHandler(startTime: startTime, manager: manager)
                     )

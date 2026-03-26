@@ -1,26 +1,36 @@
-# Session State — S307 Boardroom Onboarding + M0 Ship
+# Session State — S309 shipped M4 (Console + Events)
 
-## What Happened
-- Onboarded by Alfred in boardroom. Thesis, architecture, roadmap, team, contract — all internalized.
-- Shipped M0 (skeleton) — all 5 subtasks complete, 58 tests passing.
-- M0.1: Package.swift + entitlements + main.swift (SwiftPM, swift-nio 2.65+, VZ.fw linked)
-- M0.2: HttpServer on Unix socket, ping endpoint, graceful shutdown, test harness (curl-based)
-- M0.3: Router dispatches all 18 endpoints (pure function, if-else dispatch — fixed illegal tuple pattern matching)
-- M0.4: All 14 Dart types mirrored in Swift with Codable + snake_case CodingKeys
-- M0.5: VmmApiError envelope, all non-2xx return {"code":"...","message":"..."}
+## What Shipped This Session (S309)
+- M4.1 (Console WebSocket): NIOWebSocketServerUpgrader in pipeline, ConsoleHandler bridges
+  WebSocket frames <-> ConsoleIO FileHandle pair. One connection per machine (409 if occupied).
+  Acquire/release tracked in ManagedMachine.consoleConnected.
+- M4.2 (SSE Events): EventBus per machine (AsyncStream-based broadcast). SSEHandler writes
+  long-lived text/event-stream response. State transitions emit via MachineManager.transition()
+  helper. MachineDelegate also emits on guestDidStop/didStopWithError.
+- 105 tests passing (was 91). +14 new tests across EventBusTests, ConsoleTests, SSETests.
 
-## Pre-existing Code
-Router.swift, Types.swift, Errors.swift existed before my session (from README scaffold).
-Router had broken Swift syntax (`let` bindings in array patterns) — I rewrote to if-else.
-A hook also rewrote HttpHandler.swift to integrate Router+Types+Errors properly.
+## Cumulative State (S307-S309)
+- M0 (skeleton): 5/5 subtasks
+- M1 (CRUD): 4/4 subtasks
+- M3 (boot): 9/9 subtasks
+- M4 (console+events): 2/2 subtasks
+- Total: 20/24 subtasks. Only M5 (snapshots, 4 subtasks) remains.
 
-## Key Decisions
-- Test harness uses curl via Process (Foundation URLSession doesn't support Unix sockets)
-- HttpServer.start() returns ServerHandle for programmatic shutdown in tests
-- JSON encoding uses JSONEncoder.vmm / JSONDecoder.vmm with ISO 8601 dates + sorted keys
+## Architecture
+- Sources/BentosVmmMacos/ — main.swift, HttpServer.swift, HttpHandler.swift
+- Sources/BentosVmmMacos/Server/ — Router.swift, ConsoleHandler.swift, SSEHandler.swift
+- Sources/BentosVmmMacos/Model/ — Types.swift, Errors.swift
+- Sources/BentosVmmMacos/Persistence/ — MachineStore.swift, DiskManager.swift
+- Sources/BentosVmmMacos/VMM/ — ConfigTranslator.swift, MachineManager.swift,
+  ManagedMachine.swift, StateMapper.swift, MachineDelegate.swift, EventBus.swift
+- Tests/BentosVmmMacosTests/ — 14 test files, 105 tests
 
-## File Layout
-Sources/BentosVmmMacos/ — main.swift, HttpServer.swift, HttpHandler.swift
-Sources/BentosVmmMacos/Server/ — Router.swift
-Sources/BentosVmmMacos/Model/ — Types.swift, Errors.swift
-Tests/BentosVmmMacosTests/ — 6 test files, 58 tests
+## Key Decisions (M4)
+- NIOWebSocketServerUpgrader integrated at pipeline level via configureHTTPServerPipeline(withServerUpgrade:)
+- Console path check in shouldUpgrade callback (pure path matching)
+- SSE uses NIOAny wrapping of HTTPServerResponsePart directly (no dedicated channel handler)
+- EventBus is @MainActor, same isolation as MachineManager
+- MachineManager.transition() helper centralizes state change + event emission
+
+## What's Still 501 Stubs
+- All snapshot endpoints (M5.1-M5.4)

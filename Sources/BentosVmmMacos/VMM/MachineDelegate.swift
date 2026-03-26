@@ -19,13 +19,17 @@ final class MachineDelegate: NSObject, VZVirtualMachineDelegate, @unchecked Send
         let mgr = manager
         Task { @MainActor in
             guard var machine = mgr?.machines[id] else { return }
+            let prev = machine.state
             machine.state = .stopped
             machine.startedAt = nil
             machine.vm = nil
             machine.delegate = nil
             machine.consoleIO = nil
+            machine.consoleConnected = false
             machine.updatedAt = Date()
             mgr?.machines[id] = machine
+            machine.eventBus.emit(.stateChanged(
+                timestamp: Date(), previousState: prev, newState: .stopped))
         }
     }
 
@@ -35,17 +39,24 @@ final class MachineDelegate: NSObject, VZVirtualMachineDelegate, @unchecked Send
         let msg = error.localizedDescription
         Task { @MainActor in
             guard var machine = mgr?.machines[id] else { return }
-            machine.state = .error
+            let prev = machine.state
             machine.error = MachineError(
                 code: "vm_error",
                 message: msg,
                 recoverable: true
             )
+            machine.state = .error
             machine.vm = nil
             machine.delegate = nil
             machine.consoleIO = nil
+            machine.consoleConnected = false
             machine.updatedAt = Date()
             mgr?.machines[id] = machine
+            machine.eventBus.emit(.stateChanged(
+                timestamp: Date(), previousState: prev, newState: .error))
+            machine.eventBus.emit(.error(
+                timestamp: Date(),
+                error: MachineError(code: "vm_error", message: msg, recoverable: true)))
         }
     }
 }

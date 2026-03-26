@@ -17,12 +17,20 @@ struct ManagedMachine: @unchecked Sendable {
     var delegate: MachineDelegate?
     var consoleIO: ConsoleIO?
 
+    // Event bus — lives for the lifetime of the machine, not just while running.
+    let eventBus: EventBus
+
+    // Console connection tracking — one WebSocket at a time.
+    var consoleConnected: Bool = false
+
+    @MainActor
     init(id: String, config: BentosVmConfig) {
         self.id = id
         self.config = config
         self.state = .stopped
         self.error = nil
         self.startedAt = nil
+        self.eventBus = EventBus()
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

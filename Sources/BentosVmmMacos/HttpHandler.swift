@@ -7,6 +7,7 @@ enum HttpResponse: Sendable {
     case json(status: HTTPStatus, bytes: [UInt8])
     case noContent
     case error(VmmApiError)
+    case sse(machineId: String)
 }
 
 /// NIO channel handler: accumulates request, dispatches via Router, writes response.
@@ -18,6 +19,7 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
     private let manager: MachineManager
     private var requestHead: HTTPRequestHead?
     private var body = ByteBuffer()
+    private var sseHandler: SSEHandler?
 
     init(startTime: ContinuousDate, manager: MachineManager) {
         self.startTime = startTime
@@ -159,10 +161,23 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
                 throw VmmApiError.notImplemented("DELETE /api/v1/machines/{id}/snapshots/{sid}")
             case .restoreSnapshot:
                 throw VmmApiError.notImplemented("POST /api/v1/machines/{id}/snapshots/{sid}/restore")
-            case .console:
-                throw VmmApiError.notImplemented("GET /api/v1/machines/{id}/console")
-            case .events:
-                throw VmmApiError.notImplemented("GET /api/v1/machines/{id}/events")
+            case .console(let id):
+                // WebSocket upgrade is handled by NIOWebSocketServerUpgrader in the pipeline.
+                // If we reach here, the client didn't send upgrade headers — reject.
+                // But first check if the machine is valid and console is available.
+                let machine = try manager.get(id)
+                if machine.state != .running && machine.state != .paused {
+                    throw VmmApiError.conflict(
+                        "Machine '\(id)' must be running for console (current state: \(machine.state))")
+                }
+                if machine.consoleConnected {
+                    throw VmmApiError.conflict("Console already connected to machine '\(id)'")
+                }
+                throw VmmApiError.badRequest("Console endpoint requires WebSocket upgrade")
+            case .events(let id):
+                // Validate machine exists (eventBus throws if not found)
+                let _ = try manager.eventBus(for: id)
+                return .sse(machineId: id)
             }
         } catch let apiErr as VmmApiError {
             return .error(apiErr)
@@ -191,6 +206,12 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
 
     // MARK: - Response writing (event loop only)
 
+    func channelInactive(context: ChannelHandlerContext) {
+        sseHandler?.stop()
+        sseHandler = nil
+        context.fireChannelInactive()
+    }
+
     private func writeResponse(context: ChannelHandlerContext, response: HttpResponse) {
         switch response {
         case .json(let status, let bytes):
@@ -205,6 +226,25 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
             context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
         case .error(let err):
             writeJsonBytes(context: context, status: err.status, bytes: err.jsonBytes)
+        case .sse(let machineId):
+            let mgr = self.manager
+            let eventLoop = context.eventLoop
+            nonisolated(unsafe) let ctx = context
+            Task { @MainActor in
+                do {
+                    let bus = try mgr.eventBus(for: machineId)
+                    let handler = SSEHandler(machineId: machineId, eventBus: bus)
+                    eventLoop.execute {
+                        self.sseHandler = handler
+                        handler.start(context: ctx)
+                    }
+                } catch {
+                    eventLoop.execute {
+                        let err = VmmApiError.machineNotFound(machineId)
+                        self.writeJsonBytes(context: ctx, status: err.status, bytes: err.jsonBytes)
+                    }
+                }
+            }
         }
     }
 
@@ -271,7 +311,8 @@ struct StopRequest: Codable, Sendable {
     let force: Bool
 }
 
-struct EmptyResponse: Codable, Sendable {}
+struct EmptyResponse: Codable, Sendable {
+}
 
 // MARK: - HTTPStatus reason phrases
 
