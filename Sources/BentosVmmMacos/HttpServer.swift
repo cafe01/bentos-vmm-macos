@@ -24,12 +24,17 @@ final class HttpServer: @unchecked Sendable {
 
         let wsUpgrader = NIOWebSocketServerUpgrader(
             shouldUpgrade: { channel, head in
-                // Only upgrade console paths
+                // Upgrade console and exec WebSocket paths.
                 let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? Substring(head.uri))
                 let segs = path.split(separator: "/").map(String.init)
-                // /api/v1/machines/{id}/console
+                // /api/v1/machines/{id}/console  (5 segments)
                 if segs.count == 5,
                    segs[0] == "api", segs[1] == "v1", segs[2] == "machines", segs[4] == "console" {
+                    return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
+                }
+                // /api/v1/machines/{id}/exec  (5 segments)
+                if segs.count == 5,
+                   segs[0] == "api", segs[1] == "v1", segs[2] == "machines", segs[4] == "exec" {
                     return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
                 }
                 return channel.eventLoop.makeSucceededFuture(nil)
@@ -38,26 +43,49 @@ final class HttpServer: @unchecked Sendable {
                 let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? Substring(head.uri))
                 let segs = path.split(separator: "/").map(String.init)
                 let machineId = segs[3]
+                let endpoint = segs[4]
 
-                // Acquire console on @MainActor, then add handler on event loop
                 let promise = channel.eventLoop.makePromise(of: Void.self)
-                Task { @MainActor in
-                    do {
-                        let consoleIO = try manager.acquireConsole(machineId)
-                        let handler = ConsoleHandler(
-                            machineId: machineId, consoleIO: consoleIO, manager: manager)
-                        channel.eventLoop.execute {
-                            channel.pipeline.addHandler(handler).whenComplete { result in
-                                switch result {
-                                case .success: promise.succeed(())
-                                case .failure(let err): promise.fail(err)
+
+                if endpoint == "exec" {
+                    // Interactive exec: connect vsock, install ExecHandler
+                    Task { @MainActor in
+                        do {
+                            let conn = try await manager.vsockConnect(machineId, port: 5100)
+                            let handler = ExecHandler(machineId: machineId, conn: conn)
+                            channel.eventLoop.execute {
+                                channel.pipeline.addHandler(handler).whenComplete { result in
+                                    switch result {
+                                    case .success: promise.succeed(())
+                                    case .failure(let err): promise.fail(err)
+                                    }
                                 }
                             }
+                        } catch {
+                            promise.fail(error)
                         }
-                    } catch {
-                        promise.fail(error)
+                    }
+                } else {
+                    // Console: acquire console IO, install ConsoleHandler
+                    Task { @MainActor in
+                        do {
+                            let consoleIO = try manager.acquireConsole(machineId)
+                            let handler = ConsoleHandler(
+                                machineId: machineId, consoleIO: consoleIO, manager: manager)
+                            channel.eventLoop.execute {
+                                channel.pipeline.addHandler(handler).whenComplete { result in
+                                    switch result {
+                                    case .success: promise.succeed(())
+                                    case .failure(let err): promise.fail(err)
+                                    }
+                                }
+                            }
+                        } catch {
+                            promise.fail(error)
+                        }
                     }
                 }
+
                 return promise.futureResult
             }
         )

@@ -239,6 +239,46 @@ final class MachineManager {
         machines[id] = machine
     }
 
+    // MARK: - Exec (vsock)
+
+    /// Open a vsock connection to the guest on [port]. Machine must be running.
+    /// Returns the VZVirtioSocketConnection on success.
+    func vsockConnect(_ id: String, port: UInt32) async throws -> VZVirtioSocketConnection {
+        guard let machine = machines[id] else {
+            throw VmmApiError.machineNotFound(id)
+        }
+        guard machine.state == .running else {
+            throw VmmApiError.conflict(
+                "Machine '\(id)' must be running for exec (current state: \(machine.state))")
+        }
+        guard let vm = machine.vm else {
+            throw VmmApiError.internalError("Machine '\(id)' has no VM instance")
+        }
+        guard let vsockDev = vm.socketDevices.first as? VZVirtioSocketDevice else {
+            throw VmmApiError.conflict(
+                "Machine '\(id)' does not have vsock enabled")
+        }
+
+        // VZVirtioSocketConnection is not Sendable. Capture the device and port,
+        // then perform the connect outside @MainActor to avoid the sending violation.
+        nonisolated(unsafe) let dev = vsockDev
+        let p = port
+        return try await withCheckedThrowingContinuation { cont in
+            dev.connect(toPort: p) { result in
+                switch result {
+                case .success(let conn):
+                    nonisolated(unsafe) let c = conn
+                    cont.resume(returning: c)
+                case .failure(let err):
+                    cont.resume(throwing: VmmApiError(
+                        code: "exec_connect_failed",
+                        message: "vsock connect to port \(p) failed: \(err.localizedDescription)",
+                        status: .internalServerError))
+                }
+            }
+        }
+    }
+
     // MARK: - Events
 
     /// Get the event bus for a machine (for SSE subscription).

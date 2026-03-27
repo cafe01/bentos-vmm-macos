@@ -31,6 +31,10 @@ enum Route: Sendable {
     // Streaming
     case console(machineId: String)              // GET  /api/v1/machines/{id}/console
     case events(machineId: String)               // GET  /api/v1/machines/{id}/events
+
+    // Exec
+    case execRun(machineId: String)              // POST /api/v1/machines/{id}/exec/run
+    case exec(machineId: String)                 // GET  /api/v1/machines/{id}/exec (WebSocket)
 }
 
 /// Result of routing an HTTP request.
@@ -119,9 +123,18 @@ func route(method: HTTPMethod, path: String) -> RouteResult {
             return method == .GET ? .matched(.console(machineId: id)) : .methodNotAllowed(method: m, path: path)
         case "events":
             return method == .GET ? .matched(.events(machineId: id)) : .methodNotAllowed(method: m, path: path)
+        case "exec":
+            return method == .GET ? .matched(.exec(machineId: id)) : .methodNotAllowed(method: m, path: path)
         default:
             return .notFound(method: m, path: path)
         }
+    }
+
+    // /api/v1/machines/{id}/exec/run
+    if n == 4, sub == "exec", rest[3] == "run" {
+        return method == .POST
+            ? .matched(.execRun(machineId: id))
+            : .methodNotAllowed(method: m, path: path)
     }
 
     // /api/v1/machines/{id}/snapshots/{sid}
