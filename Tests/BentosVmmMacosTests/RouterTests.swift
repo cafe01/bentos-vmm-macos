@@ -110,18 +110,8 @@ struct RouterTests {
         guard case .matched(.exec(machineId: "x")) = r else { Issue.record("Expected .exec, got \(r)"); return }
     }
 
-    @Test func execRunRoute() {
-        let r = route(method: .POST, path: "/api/v1/machines/x/exec/run")
-        guard case .matched(.execRun(machineId: "x")) = r else { Issue.record("Expected .execRun, got \(r)"); return }
-    }
-
     @Test func execWrongMethodReturns405() {
         let r = route(method: .POST, path: "/api/v1/machines/x/exec")
-        guard case .methodNotAllowed = r else { Issue.record("Expected .methodNotAllowed, got \(r)"); return }
-    }
-
-    @Test func execRunWrongMethodReturns405() {
-        let r = route(method: .GET, path: "/api/v1/machines/x/exec/run")
         guard case .methodNotAllowed = r else { Issue.record("Expected .methodNotAllowed, got \(r)"); return }
     }
 

@@ -415,52 +415,6 @@ enum MachineEvent: Codable, Equatable, Sendable {
     }
 }
 
-// MARK: - Exec
-
-/// Request body for one-shot exec (POST .../exec/run).
-struct ExecRunRequest: Codable, Sendable {
-    let command: [String]
-    let env: [String: String]
-    let workingDir: String?
-    let tty: Bool
-    let timeoutSeconds: Int?
-
-    init(
-        command: [String],
-        env: [String: String] = [:],
-        workingDir: String? = nil,
-        tty: Bool = false,
-        timeoutSeconds: Int? = nil
-    ) {
-        self.command = command
-        self.env = env
-        self.workingDir = workingDir
-        self.tty = tty
-        self.timeoutSeconds = timeoutSeconds
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case command
-        case env
-        case workingDir = "working_dir"
-        case tty
-        case timeoutSeconds = "timeout_seconds"
-    }
-}
-
-/// Response body for one-shot exec (POST .../exec/run).
-struct ExecRunResponse: Codable, Sendable {
-    let exitCode: Int
-    let stdout: String
-    let stderr: String
-
-    enum CodingKeys: String, CodingKey {
-        case exitCode = "exit_code"
-        case stdout
-        case stderr
-    }
-}
-
 // MARK: - JSON Encoder/Decoder configured for Dart wire format
 
 extension JSONEncoder {

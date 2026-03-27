@@ -8,7 +8,6 @@ enum HttpResponse: Sendable {
     case noContent
     case error(VmmApiError)
     case sse(machineId: String)
-    case execRun(machineId: String, request: ExecRunRequest)
 }
 
 /// NIO channel handler: accumulates request, dispatches via Router, writes response.
@@ -176,10 +175,6 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
                 try await manager.restoreSnapshot(machineId, snapshotId: snapshotId)
                 let machine = try manager.get(machineId)
                 return try encodable(.ok, machine.toBentosMachine())
-            case .execRun(let id):
-                let req = try decodeBody(ExecRunRequest.self, from: bodyBytes)
-                return .execRun(machineId: id, request: req)
-
             case .exec(let id):
                 // WebSocket upgrade handled by NIOWebSocketServerUpgrader.
                 // If we reach here, client didn't send upgrade headers — reject.
@@ -275,32 +270,6 @@ final class HttpHandler: ChannelInboundHandler, RemovableChannelHandler, @unchec
                 }
             }
 
-        case .execRun(let machineId, let req):
-            let mgr = self.manager
-            let eventLoop = context.eventLoop
-            nonisolated(unsafe) let ctx = context
-            Task { @MainActor in
-                do {
-                    let conn = try await mgr.vsockConnect(machineId, port: 5100)
-                    nonisolated(unsafe) let safeConn = conn
-                    let result = try await ExecSession.runOneShot(conn: safeConn, request: req)
-                    let response = try Self.encodable(.ok, result)
-                    eventLoop.execute {
-                        self.writeResponse(context: ctx, response: response)
-                    }
-                } catch let apiErr as VmmApiError {
-                    let errResponse = HttpResponse.error(apiErr)
-                    eventLoop.execute {
-                        self.writeResponse(context: ctx, response: errResponse)
-                    }
-                } catch {
-                    let apiErr = VmmApiError.internalError(error.localizedDescription)
-                    let errResponse = HttpResponse.error(apiErr)
-                    eventLoop.execute {
-                        self.writeResponse(context: ctx, response: errResponse)
-                    }
-                }
-            }
         }
     }
 

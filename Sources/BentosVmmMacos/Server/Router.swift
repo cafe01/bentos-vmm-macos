@@ -33,7 +33,6 @@ enum Route: Sendable {
     case events(machineId: String)               // GET  /api/v1/machines/{id}/events
 
     // Exec
-    case execRun(machineId: String)              // POST /api/v1/machines/{id}/exec/run
     case exec(machineId: String)                 // GET  /api/v1/machines/{id}/exec (WebSocket)
 }
 
@@ -128,13 +127,6 @@ func route(method: HTTPMethod, path: String) -> RouteResult {
         default:
             return .notFound(method: m, path: path)
         }
-    }
-
-    // /api/v1/machines/{id}/exec/run
-    if n == 4, sub == "exec", rest[3] == "run" {
-        return method == .POST
-            ? .matched(.execRun(machineId: id))
-            : .methodNotAllowed(method: m, path: path)
     }
 
     // /api/v1/machines/{id}/snapshots/{sid}

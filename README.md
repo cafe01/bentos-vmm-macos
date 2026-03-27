@@ -9,7 +9,7 @@ bentos-vmm-macos (this package)
 +--------------------------------------------------------------+
 |  SwiftNIO HTTP Server (Unix socket)                          |
 |    /api/v1/machines, /api/v1/vmm/...                         |
-|    JSON in/out. WebSocket for console. SSE for events.       |
+|    JSON in/out. WebSocket for console + exec. SSE for events.|
 |                                                              |
 |  MachineManager (@MainActor)                                 |
 |    machines: [String: ManagedMachine]                        |
@@ -66,6 +66,12 @@ If this code and the Dart client disagree, the Dart client wins.
 | DELETE | `/api/v1/machines/{id}/snapshots/{sid}` | - | 204 No Content |
 | POST | `/api/v1/machines/{id}/snapshots/{sid}/restore` | - | 200 OK |
 
+### Exec
+
+| Method | Endpoint | Protocol | Description |
+|--------|----------|----------|-------------|
+| GET | `/api/v1/machines/{id}/exec` | WebSocket | Exec in guest via vsock + bentos-execd. TLV-framed binary. Interactive and one-shot (one-shot is a client-side pattern via `.collect()`). |
+
 ### Streaming
 
 | Method | Endpoint | Protocol | Description |
@@ -119,24 +125,24 @@ lib/bentos_vmm_macos/
 |   +-- BentosVmmMacos/
 |       +-- main.swift
 |       +-- Server/
-|       |   +-- HttpServer.swift         SwiftNIO on Unix socket
 |       |   +-- Router.swift             Route dispatch (pattern matching)
-|       |   +-- Handlers/
-|       |       +-- MachineHandlers.swift
-|       |       +-- SnapshotHandlers.swift
-|       |       +-- VmmHandlers.swift
-|       |       +-- ConsoleHandler.swift  WebSocket bridge to virtio-console
-|       |       +-- EventHandler.swift    SSE stream
+|       |   +-- ConsoleHandler.swift     WebSocket bridge to virtio-console
+|       |   +-- ExecHandler.swift        WebSocket bridge to vsock exec (TLV frames)
+|       |   +-- SSEHandler.swift         SSE event stream
+|       +-- HttpHandler.swift             NIO channel handler (request dispatch + response writing)
+|       +-- HttpServer.swift             SwiftNIO on Unix socket + WebSocket upgrade
 |       +-- VMM/
-|       |   +-- MachineManager.swift     @MainActor, owns all VMs
+|       |   +-- MachineManager.swift     @MainActor, owns all VMs + vsockConnect
 |       |   +-- ManagedMachine.swift     Per-machine state (config + VZVirtualMachine)
+|       |   +-- MachineDelegate.swift    VZ.fw delegate callbacks
 |       |   +-- ConfigTranslator.swift   BentosVmConfig JSON -> VZVirtualMachineConfiguration
 |       |   +-- StateMapper.swift        VZVirtualMachine.state -> MachineState string
+|       |   +-- EventBus.swift           Per-machine event publication
 |       +-- Model/
 |       |   +-- Types.swift              Swift mirrors of Dart types (JSON Codable)
 |       |   +-- Errors.swift             VmmApiError JSON envelope
-|       |   +-- Events.swift             SSE event payloads
 |       +-- Persistence/
+|           +-- DiskManager.swift        Disk image creation + management
 |           +-- MachineStore.swift       config.json + disk images + snapshots on disk
 +-- Tests/
     +-- BentosVmmMacosTests/
@@ -188,6 +194,12 @@ bentos-vmm get dev
 # Attach console
 bentos-vmm console dev
 
+# Exec a command in the guest
+bentos-vmm exec dev -- uname -a
+
+# Interactive shell
+bentos-vmm shell dev
+
 # Stop
 bentos-vmm stop dev
 
@@ -217,4 +229,5 @@ curl --unix-socket /tmp/bentos-vmm.sock -X POST http://localhost/api/v1/machines
 | `university/cs/apple-virtualization/lessons/11-swift-implementation-guide.md` | SwiftPM, SwiftNIO, ConfigTranslator, concurrency, wire format matching |
 | `university/cs/apple-virtualization/lessons/12-the-boot-pipeline.md` | Kernel bundling, rootfs creation, boot sequence, dev workflow |
 | `university/cs/apple-virtualization/lessons/A1-bentos-vmm-interface.md` | Design philosophy, capability matrix, interface rationale |
+| `university/cs/apple-virtualization/lessons/13-vm-exec.md` | VM exec architecture — vsock + guest agent, TLV protocol, data paths |
 | `hq/console-virtualization-intel.md` | System-level VMM architecture, cross-platform strategy |
