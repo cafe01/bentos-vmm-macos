@@ -1,5 +1,7 @@
 # bentos-vmm-macos
 
+[![CI](https://github.com/cafe01/bentos-vmm-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/cafe01/bentos-vmm-macos/actions/workflows/ci.yml)
+
 Standalone Swift daemon that wraps Apple's Virtualization.framework and serves the BentOS VMM REST API on a Unix domain socket. This is the macOS backend — one of several `bentos-vmm-*` processes that BentOS Console connects to. Console never links VZ.fw directly; it speaks HTTP to this daemon.
 
 ## Architecture
