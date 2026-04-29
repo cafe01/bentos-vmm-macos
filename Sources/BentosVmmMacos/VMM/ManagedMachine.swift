@@ -1,6 +1,21 @@
 import Foundation
 import Virtualization
 
+/// Sendable wrapper for VZVirtioSocketConnection.
+/// `@unchecked Sendable` — callers must not use `fileDescriptor` after `close()`.
+/// Matches the `ManagedMachine: @unchecked Sendable` pattern in this file.
+final class VsockConnectionBox: @unchecked Sendable {
+    private let conn: VZVirtioSocketConnection
+    let fileDescriptor: Int32
+
+    init(_ conn: VZVirtioSocketConnection) {
+        self.conn = conn
+        self.fileDescriptor = conn.fileDescriptor
+    }
+
+    func close() { conn.close() }
+}
+
 /// Per-machine state. Config + lifecycle state + timestamps + VZ runtime.
 /// Only accessed on @MainActor (via MachineManager).
 struct ManagedMachine: @unchecked Sendable {

@@ -255,6 +255,13 @@ final class MachineManager {
 
     // MARK: - Exec (vsock)
 
+    /// Open a vsock connection and return a Sendable box. Machine must be running.
+    /// Wraps vsockConnect so the non-Sendable VZVirtioSocketConnection never leaves @MainActor.
+    func vsockConnectBox(_ id: String, port: UInt32) async throws -> VsockConnectionBox {
+        let conn = try await vsockConnect(id, port: port)
+        return VsockConnectionBox(conn)
+    }
+
     /// Open a vsock connection to the guest on [port]. Machine must be running.
     /// Returns the VZVirtioSocketConnection on success.
     func vsockConnect(_ id: String, port: UInt32) async throws -> VZVirtioSocketConnection {
@@ -295,12 +302,25 @@ final class MachineManager {
 
     // MARK: - Events
 
-    /// Get the event bus for a machine (for SSE subscription).
+    /// Get the event bus for a machine.
     func eventBus(for id: String) throws -> EventBus {
         guard let machine = machines[id] else {
             throw VmmApiError.machineNotFound(id)
         }
         return machine.eventBus
+    }
+
+    /// Subscribe to machine events. Combines machine lookup + bus subscribe in one @MainActor hop.
+    func subscribeEvents(_ id: String) throws -> (stream: AsyncStream<MachineEvent>, subId: UUID) {
+        let bus = try eventBus(for: id)
+        let (stream, id) = bus.subscribe()
+        return (stream, id)
+    }
+
+    /// Unsubscribe from machine events by subscription ID.
+    func unsubscribeEvents(_ id: String, subId: UUID) {
+        guard let machine = machines[id] else { return }
+        machine.eventBus.unsubscribe(subId)
     }
 
     // MARK: - Snapshots

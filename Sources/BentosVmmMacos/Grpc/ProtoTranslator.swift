@@ -179,6 +179,33 @@ enum ProtoTranslator {
         return mc
     }
 
+    // MARK: - MachineEvent → proto MachineEvent
+
+    static func toProtoEvent(_ event: MachineEvent) -> Bentos_Vmm_V1_MachineEvent {
+        var e = Bentos_Vmm_V1_MachineEvent()
+        switch event {
+        case .stateChanged(let ts, let prev, let next):
+            e.timestamp = ISO8601DateFormatter().string(from: ts)
+            var sc = Bentos_Vmm_V1_MachineStateChanged()
+            sc.previousState = toProtoState(prev)
+            sc.newState = toProtoState(next)
+            e.payload = .stateChanged(sc)
+        case .error(let ts, let err):
+            e.timestamp = ISO8601DateFormatter().string(from: ts)
+            var inner = Bentos_Vmm_V1_MachineError()
+            inner.code = err.code
+            inner.message = err.message
+            inner.recoverable = err.recoverable
+            var me = Bentos_Vmm_V1_MachineErrored()
+            me.error = inner
+            e.payload = .errored(me)
+        case .controlChannel:
+            // No proto equivalent — omit payload; client skips unknown/empty payload per spec.
+            e.timestamp = ISO8601DateFormatter().string(from: Date())
+        }
+        return e
+    }
+
     // MARK: - State mapping
 
     static func toProtoState(_ state: MachineState) -> Bentos_Vmm_V1_MachineState {
