@@ -29,7 +29,7 @@ final class MachineManager {
         try store.save(id: id, config: config)
 
         if let rootDisk = config.disks.first(where: { $0.role == .root }) {
-            let goldenPath = DiskManager.goldenRootfsPath()
+            let goldenPath = config.rootfsPath ?? DiskManager.goldenRootfsPath()
             if FileManager.default.fileExists(atPath: goldenPath) {
                 try DiskManager.cloneRootfs(
                     goldenPath: goldenPath,
@@ -198,7 +198,7 @@ final class MachineManager {
     }
 
     /// Press power button (ACPI signal). Guest may ignore.
-    func pressePowerButton(_ id: String) throws {
+    func pressPowerButton(_ id: String) throws {
         guard let machine = machines[id] else {
             throw VmmApiError.machineNotFound(id)
         }
@@ -209,6 +209,20 @@ final class MachineManager {
             throw VmmApiError.internalError("Machine '\(id)' has no VM instance")
         }
         try vm.requestStop()
+    }
+
+    // MARK: - Apply
+
+    /// Replace a machine's config atomically. Persists immediately; takes effect on next start.
+    func apply(_ id: String, config: BentosVmConfig) throws -> ManagedMachine {
+        guard var machine = machines[id] else {
+            throw VmmApiError.machineNotFound(id)
+        }
+        machine.config = config
+        machine.updatedAt = Date()
+        machines[id] = machine
+        try store.save(id: id, config: config)
+        return machine
     }
 
     // MARK: - Console
@@ -292,8 +306,12 @@ final class MachineManager {
     // MARK: - Snapshots
 
     /// Create a snapshot of a running or paused machine.
+    /// Writes the VZ save bundle to the caller-supplied absolute path.
     /// Pauses if running, saves state, resumes if was running.
-    func createSnapshot(_ machineId: String, name: String?) async throws -> BentosSnapshot {
+    func createSnapshot(_ machineId: String, path: String) async throws -> BentosSnapshot {
+        guard !path.isEmpty, path.hasPrefix("/") else {
+            throw VmmApiError.badRequest("Snapshot path must be an absolute path, got: '\(path)'")
+        }
         guard var machine = machines[machineId] else {
             throw VmmApiError.machineNotFound(machineId)
         }
@@ -305,6 +323,11 @@ final class MachineManager {
             throw VmmApiError.internalError("Machine '\(machineId)' has no VM instance")
         }
 
+        let parentDir = (path as NSString).deletingLastPathComponent
+        guard FileManager.default.fileExists(atPath: parentDir) else {
+            throw VmmApiError.badRequest("Snapshot parent directory does not exist: '\(parentDir)'")
+        }
+
         let wasRunning = machine.state == .running
 
         // Pause if running
@@ -313,19 +336,10 @@ final class MachineManager {
             transition(machineId, &machine, to: .paused)
         }
 
-        let snapId = UUID().uuidString.lowercased()
-        let snapName = name ?? "snapshot-\(snapId.prefix(8))"
-        let snapDir = "\(store.machineDir(machineId))/snapshots/\(snapId)"
-        let stateFile = "\(snapDir)/state.vzsave"
-
         do {
-            try FileManager.default.createDirectory(
-                atPath: snapDir, withIntermediateDirectories: true)
-
-            let stateURL = URL(fileURLWithPath: stateFile)
+            let stateURL = URL(fileURLWithPath: path)
             try await vm.saveMachineStateTo(url: stateURL)
         } catch {
-            // Resume if we paused
             if wasRunning {
                 try? await vm.resume()
                 machine = machines[machineId] ?? machine
@@ -344,19 +358,24 @@ final class MachineManager {
             transition(machineId, &machine, to: .running)
         }
 
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: stateFile)[.size] as? Int) ?? 0
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
+        let snapId = UUID().uuidString.lowercased()
 
         return BentosSnapshot(
             id: snapId,
             machineId: machineId,
-            name: snapName,
+            name: (path as NSString).lastPathComponent,
             sizeBytes: fileSize,
-            createdAt: Date()
+            createdAt: Date(),
+            path: path
         )
     }
 
-    /// Restore a machine from a snapshot. Machine must be stopped.
-    func restoreSnapshot(_ machineId: String, snapshotId: String) async throws {
+    /// Restore a machine from a snapshot at the given absolute host path. Machine must be stopped.
+    func restoreSnapshot(_ machineId: String, path: String) async throws {
+        guard !path.isEmpty, path.hasPrefix("/") else {
+            throw VmmApiError.badRequest("Snapshot path must be an absolute path, got: '\(path)'")
+        }
         guard var machine = machines[machineId] else {
             throw VmmApiError.machineNotFound(machineId)
         }
@@ -365,10 +384,8 @@ final class MachineManager {
                 "Machine '\(machineId)' must be stopped to restore (current state: \(machine.state))")
         }
 
-        let snapDir = "\(store.machineDir(machineId))/snapshots/\(snapshotId)"
-        let stateFile = "\(snapDir)/state.vzsave"
-        guard FileManager.default.fileExists(atPath: stateFile) else {
-            throw VmmApiError.snapshotNotFound(machineId, snapshotId)
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw VmmApiError.badRequest("Snapshot file not found at path: '\(path)'")
         }
 
         let machineDir = store.machineDir(machineId)
@@ -384,7 +401,7 @@ final class MachineManager {
             let delegate = MachineDelegate(machineId: machineId, manager: self)
             vm.delegate = delegate
 
-            let stateURL = URL(fileURLWithPath: stateFile)
+            let stateURL = URL(fileURLWithPath: path)
             nonisolated(unsafe) let unsafeVm = vm
             try await unsafeVm.restoreMachineStateFrom(url: stateURL)
 
@@ -405,54 +422,6 @@ final class MachineManager {
                 message: error.localizedDescription,
                 status: .internalServerError)
         }
-    }
-
-    /// List all snapshots for a machine.
-    func listSnapshots(_ machineId: String) throws -> [BentosSnapshot] {
-        guard machines[machineId] != nil else {
-            throw VmmApiError.machineNotFound(machineId)
-        }
-
-        let snapshotsDir = "\(store.machineDir(machineId))/snapshots"
-        guard FileManager.default.fileExists(atPath: snapshotsDir) else {
-            return []
-        }
-
-        let entries = (try? FileManager.default.contentsOfDirectory(atPath: snapshotsDir)) ?? []
-        var snapshots: [BentosSnapshot] = []
-
-        for entry in entries {
-            let stateFile = "\(snapshotsDir)/\(entry)/state.vzsave"
-            guard FileManager.default.fileExists(atPath: stateFile) else { continue }
-
-            let attrs = try? FileManager.default.attributesOfItem(atPath: stateFile)
-            let size = (attrs?[.size] as? Int) ?? 0
-            let created = (attrs?[.creationDate] as? Date) ?? Date()
-
-            snapshots.append(BentosSnapshot(
-                id: entry,
-                machineId: machineId,
-                name: "snapshot-\(entry.prefix(8))",
-                sizeBytes: size,
-                createdAt: created
-            ))
-        }
-
-        return snapshots.sorted { $0.createdAt < $1.createdAt }
-    }
-
-    /// Delete a snapshot.
-    func deleteSnapshot(_ machineId: String, snapshotId: String) throws {
-        guard machines[machineId] != nil else {
-            throw VmmApiError.machineNotFound(machineId)
-        }
-
-        let snapDir = "\(store.machineDir(machineId))/snapshots/\(snapshotId)"
-        guard FileManager.default.fileExists(atPath: snapDir) else {
-            throw VmmApiError.snapshotNotFound(machineId, snapshotId)
-        }
-
-        try FileManager.default.removeItem(atPath: snapDir)
     }
 
     // MARK: - Resize

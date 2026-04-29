@@ -4,6 +4,10 @@
 > Owner: Cafe (CTO) + Alfred (CPO/COO)
 > Status: ALL MILESTONES COMPLETE + E2E VALIDATED — M0+M1+M3+M4+M5 (121 tests, S308-S309). 24/24 subtasks. First VM boot achieved S309.
 
+> Cafe's resolution at s373: 
+> THIS FILE MUST BE RETROFIT as (previously completed) warroom mission!
+> Once (the value of) this file is absorbed into Q05, then we can delete it.
+
 One deliverable: the bentos-vmm-macos Swift daemon — an HTTP API over Unix socket wrapping Apple's Virtualization.framework. Goal: `POST /api/v1/machines` + `POST .../start` boots a real Linux VM on Apple Silicon.
 
 ---

@@ -16,7 +16,10 @@ let server = GRPCServer(
         address: .ipv4(host: host, port: port),
         transportSecurity: .plaintext
     ),
-    services: [VmmServiceImpl(manager: manager)]
+    services: [
+        VmmServiceImpl(manager: manager),
+        MachineServiceImpl(manager: manager),
+    ]
 )
 
 try await server.serve()

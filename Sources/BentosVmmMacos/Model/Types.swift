@@ -137,6 +137,10 @@ struct BentosVmConfig: Codable, Equatable, Sendable {
     let enableEntropy: Bool
     let enableBalloon: Bool
     let enableRosetta: Bool
+    /// Absolute host path to the rootfs image supplied by the caller (proto path).
+    /// When set, MachineManager skips the golden-rootfs clone and uses this path directly.
+    /// Nil for machines created via the old HTTP API or legacy JSON.
+    let rootfsPath: String?
 
     init(
         name: String,
@@ -149,7 +153,8 @@ struct BentosVmConfig: Codable, Equatable, Sendable {
         enableVsock: Bool = true,
         enableEntropy: Bool = true,
         enableBalloon: Bool = true,
-        enableRosetta: Bool = false
+        enableRosetta: Bool = false,
+        rootfsPath: String? = nil
     ) {
         self.name = name
         self.cpuCount = cpuCount
@@ -162,6 +167,7 @@ struct BentosVmConfig: Codable, Equatable, Sendable {
         self.enableEntropy = enableEntropy
         self.enableBalloon = enableBalloon
         self.enableRosetta = enableRosetta
+        self.rootfsPath = rootfsPath
     }
 
     enum CodingKeys: String, CodingKey {
@@ -176,6 +182,23 @@ struct BentosVmConfig: Codable, Equatable, Sendable {
         case enableEntropy = "enable_entropy"
         case enableBalloon = "enable_balloon"
         case enableRosetta = "enable_rosetta"
+        case rootfsPath = "rootfs_path"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        cpuCount = try c.decode(Int.self, forKey: .cpuCount)
+        memoryBytes = try c.decode(Int.self, forKey: .memoryBytes)
+        boot = try c.decode(BootConfig.self, forKey: .boot)
+        disks = try c.decode([DiskConfig].self, forKey: .disks)
+        network = try c.decode(NetworkConfig.self, forKey: .network)
+        sharedDirectories = try c.decodeIfPresent([SharedDirectoryConfig].self, forKey: .sharedDirectories) ?? []
+        enableVsock = try c.decodeIfPresent(Bool.self, forKey: .enableVsock) ?? true
+        enableEntropy = try c.decodeIfPresent(Bool.self, forKey: .enableEntropy) ?? true
+        enableBalloon = try c.decodeIfPresent(Bool.self, forKey: .enableBalloon) ?? true
+        enableRosetta = try c.decodeIfPresent(Bool.self, forKey: .enableRosetta) ?? false
+        rootfsPath = try c.decodeIfPresent(String.self, forKey: .rootfsPath)
     }
 }
 
@@ -249,6 +272,17 @@ struct BentosSnapshot: Codable, Equatable, Sendable {
     let name: String
     let sizeBytes: Int
     let createdAt: Date
+    /// Absolute host path to the snapshot file. Populated for gRPC-originated snapshots.
+    let path: String?
+
+    init(id: String, machineId: String, name: String, sizeBytes: Int, createdAt: Date, path: String? = nil) {
+        self.id = id
+        self.machineId = machineId
+        self.name = name
+        self.sizeBytes = sizeBytes
+        self.createdAt = createdAt
+        self.path = path
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -256,6 +290,7 @@ struct BentosSnapshot: Codable, Equatable, Sendable {
         case name
         case sizeBytes = "size_bytes"
         case createdAt = "created_at"
+        case path
     }
 }
 

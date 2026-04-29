@@ -1,1 +1,5 @@
 .build/
+# Build plugin codegen artifacts (emitted alongside source files by GRPCProtobufGenerator)
+*.d
+*.o
+*.swiftdeps
