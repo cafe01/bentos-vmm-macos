@@ -1,0 +1,445 @@
+// BentOS VMM — Wire Schema
+//
+// Canonical IDL for the bentos-vmm-* daemon contract. The implementations
+// (lib/bentos_vmm-rs, lib/bentos_vmm_macos, future bentos-vmm-linux) generate
+// their client and server code from this file.
+//
+// Annotated by bentos-vmm-system-spec.md (sibling).
+// Derives nouns and principles from bentos-vmm-product-spec.md.
+
+syntax = "proto3";
+
+package bentos.vmm.v1;
+
+// ============================================================================
+//   §1  Enums
+// ============================================================================
+
+// Machine lifecycle. Six explicit states. UNSPECIFIED is the forward-compat
+// landing for variants a client predates.
+enum MachineState {
+  MACHINE_STATE_UNSPECIFIED = 0;
+  MACHINE_STATE_STOPPED     = 1;  // Persistent identity, not running. Holds capacity.
+  MACHINE_STATE_STARTING    = 2;  // Booting. Transient; advances to RUNNING or ERROR.
+  MACHINE_STATE_RUNNING     = 3;  // Guest OS executing.
+  MACHINE_STATE_PAUSED      = 4;  // Frozen in memory. Instant resume.
+  MACHINE_STATE_STOPPING    = 5;  // Shutting down. Transient; advances to STOPPED or ERROR.
+  MACHINE_STATE_ERROR       = 6;  // Failure; Machine.error carries detail.
+}
+
+enum CapabilityKind {
+  CAPABILITY_KIND_UNSPECIFIED = 0;
+  CAPABILITY_KIND_DEVICE      = 1;  // /dev/* in guest
+  CAPABILITY_KIND_FILESYSTEM  = 2;  // /mnt/* in guest
+  CAPABILITY_KIND_SOCKET      = 3;  // /run/*.sock in guest
+}
+
+// Names which layer of the BentOS stack instantiates the capability —
+// product-name-agnostic and durable across product renames.
+enum CapabilityBacking {
+  CAPABILITY_BACKING_UNSPECIFIED = 0;
+  CAPABILITY_BACKING_HOST        = 1;  // bentos-vmm-* as a virtio device
+  CAPABILITY_BACKING_GUEST       = 2;  // forwarded over vsock; opaque to VMM Layer
+}
+
+// Protocol family. Discovery and filtering label; operational semantics are
+// determined by Kind + Backing.
+enum CapabilitySubsystem {
+  CAPABILITY_SUBSYSTEM_UNSPECIFIED = 0;
+  CAPABILITY_SUBSYSTEM_BLOCK       = 1;  // block storage (root or data disk)
+  CAPABILITY_SUBSYSTEM_STORAGE     = 2;  // file storage (virtiofs mount)
+  CAPABILITY_SUBSYSTEM_NET         = 3;  // network interface
+  CAPABILITY_SUBSYSTEM_HTTP        = 4;  // HTTP proxy device
+  CAPABILITY_SUBSYSTEM_LLM         = 5;  // LLM inference device
+  CAPABILITY_SUBSYSTEM_IM          = 6;  // instant messaging device
+  CAPABILITY_SUBSYSTEM_MGMT        = 7;  // management socket
+}
+
+enum BlockRole {
+  BLOCK_ROLE_UNSPECIFIED = 0;
+  BLOCK_ROLE_ROOT        = 1;  // exactly one ROOT per machine
+  BLOCK_ROLE_DATA        = 2;
+}
+
+enum NetMode {
+  NET_MODE_UNSPECIFIED = 0;
+  NET_MODE_NAT         = 1;
+  NET_MODE_BRIDGED     = 2;  // requires VmmCapabilities.bridged_network
+  NET_MODE_NONE        = 3;
+}
+
+// ============================================================================
+//   §2  First-class nouns — Image, Capability, Machine
+// ============================================================================
+
+// A bootable OS payload. Resolved by benstackd from its catalog and passed
+// inline. The VMM Layer never resolves images.
+message Image {
+  string id                   = 1;  // benstackd-assigned identifier
+  string name                 = 2;  // human-readable (e.g. "bentos/openclaw")
+  string version              = 3;  // semver or revision tag
+  string kernel_path          = 4;  // absolute path on host filesystem
+  string rootfs_path          = 5;  // absolute path on host filesystem
+  string default_command_line = 6;  // appended unless overridden in MachineConfig
+}
+
+// What is plugged into a machine. Same vocabulary as the BenStack stack-wide
+// Capability concept; the VMM Layer ROUTES by backing, never translates.
+message MachineCapability {
+  CapabilityKind      kind      = 1;
+  CapabilityBacking   backing   = 2;
+  CapabilitySubsystem subsystem = 3;
+  string              path      = 4;  // guest-side path: /dev/*, /mnt/*, /run/*.sock
+
+  // Kind+Backing+Subsystem selects the variant.
+  oneof config {
+    BlockConfig   block   = 5;  // kind=DEVICE, backing=HOST, subsystem=BLOCK
+    StorageConfig storage = 6;  // kind=FILESYSTEM, backing=HOST, subsystem=STORAGE
+    NetConfig     net     = 7;  // kind=DEVICE, backing=HOST, subsystem=NET
+    GuestConfig   guest   = 8;  // backing=GUEST (any kind/subsystem)
+  }
+}
+
+message BlockConfig {
+  BlockRole role       = 1;
+  uint64    size_bytes = 2;
+  bool      read_only  = 3;
+}
+
+// path on the parent MachineCapability is the virtiofs tag (mount -t virtiofs <path> ...).
+message StorageConfig {
+  string host_path = 1;  // host directory shared via virtiofs
+  bool   read_only = 2;
+}
+
+message NetConfig {
+  NetMode mode      = 1;
+  string  interface = 2;  // host bridge name; required iff mode == NET_MODE_BRIDGED
+}
+
+// Opaque to the VMM Layer. payload is forwarded verbatim over vsock to bentosd.
+// Schema is per-driver, defined by the BentOS Driver SDK.
+message GuestConfig {
+  bytes payload = 1;
+}
+
+// Declarative machine description. Single source of truth — one MachineConfig
+// describes the entire machine. Mutation is "apply a new MachineConfig".
+message MachineConfig {
+  string                     name           = 1;
+  uint32                     cpu_count      = 2;
+  uint64                     memory_bytes   = 3;
+  Image                      image          = 4;   // full Image — resolved by benstackd
+  string                     command_line   = 5;   // overrides Image.default_command_line when non-empty
+  repeated MachineCapability capabilities   = 6;   // ≥1 root-block (kind=DEVICE/backing=HOST/subsystem=BLOCK/role=ROOT)
+  bool                       enable_vsock   = 7;   // default true (see system spec §1.4 — proto3 zero-value treated as true); required true if any guest-backed capability
+  bool                       enable_entropy = 8;   // default true (see system spec §1.4)
+  bool                       enable_balloon = 9;   // default true (see system spec §1.4)
+  bool                       enable_rosetta = 10;  // default false; macOS-only, ignored elsewhere
+}
+
+// Live machine record. id is stable across lifecycle; updated_at refreshes on
+// any state change.
+message Machine {
+  string         id         = 1;
+  MachineConfig  config     = 2;
+  MachineState   state      = 3;
+  MachineError   error      = 4;  // set iff state == MACHINE_STATE_ERROR
+  MachineRuntime runtime    = 5;  // set iff state in {RUNNING, PAUSED}
+  string         created_at = 6;  // ISO 8601
+  string         updated_at = 7;  // ISO 8601
+}
+
+message MachineRuntime {
+  float  cpu_usage_percent = 1;  // 0.0–100.0 per-vCPU aggregate
+  uint64 memory_used_bytes = 2;
+  uint64 uptime_seconds    = 3;
+}
+
+message MachineError {
+  string code        = 1;  // machine-readable
+  string message     = 2;  // human-readable
+  bool   recoverable = 3;  // whether Start may recover
+}
+
+// ============================================================================
+//   §3  Backend self-description
+// ============================================================================
+
+// Backend feature surface. Additive — new fields appear as backends grow;
+// proto3 forward-compat means clients tolerate unknown fields by construction.
+message VmmCapabilities {
+  bool   hot_resize             = 1;
+  bool   live_migration         = 2;
+  bool   bridged_network        = 3;
+  bool   rosetta                = 4;
+  bool   snapshot               = 5;
+  bool   snapshot_includes_disk = 6;
+  bool   gpu_passthrough        = 7;
+  bool   pause_resume           = 14; // Pause/Resume support. Wire-side mirror of cluster-level PRSM feature flag.
+  uint32 max_vcpus              = 8;
+  uint64 max_memory_bytes       = 9;
+  uint64 available_memory_bytes = 10;
+  string vmm_name               = 11;  // e.g. "bentos-vmm-macos"
+  string vmm_version            = 12;  // SemVer
+  string platform               = 13;  // "macos" | "linux" | "windows" — informational only
+}
+
+message VmmHealth {
+  bool   healthy        = 1;
+  uint32 machine_count  = 2;
+  uint64 uptime_seconds = 3;
+}
+
+// ============================================================================
+//   §4  Snapshot
+// ============================================================================
+
+// The snapshot IS the file at the provided path. The VMM Layer is a stateless
+// executor — no catalog, no list, no delete; benstackd owns snapshot storage.
+message SnapshotResult {
+  string path       = 1;  // absolute path written; echoes the request
+  uint64 size_bytes = 2;
+  string taken_at   = 3;  // ISO 8601
+}
+
+// ============================================================================
+//   §5  Events  (server-streamed)
+// ============================================================================
+
+// MachineEvent is the WatchEvents stream payload. New `payload` variants MAY be
+// added; clients MUST tolerate unset payload (= unknown variant) and skip.
+// timestamp is always present.
+message MachineEvent {
+  string timestamp = 1;  // ISO 8601
+  oneof payload {
+    MachineStateChanged state_changed = 2;
+    MachineErrored      errored       = 3;
+  }
+}
+
+message MachineStateChanged {
+  MachineState previous_state = 1;
+  MachineState new_state      = 2;
+}
+
+message MachineErrored {
+  MachineError error = 1;
+}
+
+// ============================================================================
+//   §6  Console  (bidi-streamed)
+// ============================================================================
+
+// Primary IO surface. Raw serial pipe.
+//
+// Lifecycle:
+//   1. Client opens stream.
+//   2. First client message: ConsoleAttach { machine_id }.
+//   3. Server attaches the stream to the guest serial port.
+//   4. Bytes flow bidirectionally until either side closes.
+//
+// The serial port persists across stream open/close — closing the stream does
+// not affect the guest. A new stream re-attaches the same serial session.
+
+message ConsoleClientMessage {
+  oneof payload {
+    ConsoleAttach attach = 1;  // first message — identifies the machine
+    bytes         stdin  = 2;  // serial input bytes
+  }
+}
+
+message ConsoleAttach {
+  string machine_id = 1;
+}
+
+message ConsoleServerMessage {
+  // oneof for forward-compat — server MAY add variants (e.g., control events).
+  oneof payload {
+    bytes stdout = 1;  // serial output bytes
+  }
+}
+
+// ============================================================================
+//   §7  Exec  (bidi-streamed, conditional)
+// ============================================================================
+
+// Conditional on bentos-execd being reachable on the guest's vsock CID. When
+// unreachable, the daemon refuses the stream open with Status UNAVAILABLE.
+//
+// Lifecycle:
+//   1. Client opens stream.
+//   2. First client message: ExecRequest { machine_id, cmd, env, cwd, tty, ... }.
+//   3. Server responds with ExecStarted { pid }.
+//   4. Client streams stdin; server streams stdout/stderr.
+//   5. Client sends ExecStdinEof when done writing.
+//   6. Process exits → server emits ExecExited { code, signal } and closes.
+//   7. On guest-side failure: server emits ExecError and closes.
+
+message ExecClientMessage {
+  oneof payload {
+    ExecRequest      request       = 1;  // first message
+    bytes            stdin         = 2;
+    ExecStdinEof     stdin_eof     = 3;
+    ExecWindowResize window_resize = 4;
+    ExecSignal       signal        = 5;
+  }
+}
+
+message ExecServerMessage {
+  oneof payload {
+    ExecStarted started = 1;
+    bytes       stdout  = 2;
+    bytes       stderr  = 3;
+    ExecExited  exited  = 4;
+    ExecError   error   = 5;
+  }
+}
+
+message ExecRequest {
+  string              machine_id = 1;
+  repeated string     cmd        = 2;  // argv[0..n]
+  map<string, string> env        = 3;
+  string              cwd        = 4;  // "" = guest default
+  bool                tty        = 5;  // allocate pseudo-TTY
+  uint32              rows       = 6;  // initial terminal rows (tty mode)
+  uint32              cols       = 7;  // initial terminal cols (tty mode)
+}
+
+message ExecStdinEof {}  // signal-only; closes guest stdin
+
+message ExecWindowResize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message ExecSignal {
+  int32 signal = 1;  // POSIX signal number (e.g. 2 = SIGINT)
+}
+
+message ExecStarted {
+  uint32 pid = 1;  // guest process PID; informational
+}
+
+message ExecExited {
+  int32 code   = 1;  // exit code (0 = success)
+  int32 signal = 2;  // terminating signal, or 0
+}
+
+message ExecError {
+  string error = 1;  // human-readable failure reason
+}
+
+// ============================================================================
+//   §8  Apply-config rejection  (Status detail payload)
+// ============================================================================
+
+// Attached to Status.details when MachineService.Create or Apply rejects a
+// MachineConfig. One entry per offending field.
+message MachineConfigRejection {
+  repeated FieldError field_errors = 1;
+}
+
+message FieldError {
+  string path   = 1;  // dotted path, e.g. "capabilities[2].config.block.size_bytes"
+  string code   = 2;  // stable rejection code — see system spec §4.3
+  string reason = 3;  // human-readable
+}
+
+// ============================================================================
+//   §9  VmmService — backend self-description
+// ============================================================================
+
+service VmmService {
+  // Backend feature surface. Cached per session by clients; the truth from
+  // which UI gates optional features.
+  rpc GetCapabilities(GetVmmCapabilitiesRequest) returns (VmmCapabilities);
+
+  // Liveness probe.
+  rpc Ping(PingRequest) returns (VmmHealth);
+}
+
+message GetVmmCapabilitiesRequest {}
+message PingRequest {}
+
+// ============================================================================
+//   §10  MachineService — machine lifecycle, snapshots, streaming IO
+// ============================================================================
+
+service MachineService {
+  // ---- CRUD ----
+  rpc Create(CreateMachineRequest) returns (Machine);
+  rpc List  (ListMachinesRequest)  returns (ListMachinesResponse);
+  rpc Get   (GetMachineRequest)    returns (Machine);
+
+  // Universal mutator. A complete new MachineConfig replaces the current one;
+  // the daemon validates feasibility and either commits atomically or rejects
+  // with MachineConfigRejection in Status.details.
+  rpc Apply (ApplyMachineConfigRequest) returns (Machine);
+
+  rpc Delete(DeleteMachineRequest) returns (DeleteMachineResponse);
+
+  // ---- Lifecycle verbs ----
+  rpc Start            (StartMachineRequest)       returns (StartMachineResponse);
+  rpc Stop             (StopMachineRequest)        returns (StopMachineResponse);
+  rpc Pause            (PauseMachineRequest)       returns (PauseMachineResponse);
+  rpc Resume           (ResumeMachineRequest)      returns (ResumeMachineResponse);
+  rpc PressPowerButton (PressPowerButtonRequest)   returns (PressPowerButtonResponse);
+
+  // ---- Snapshots ----
+  rpc TakeSnapshot   (TakeSnapshotRequest)    returns (SnapshotResult);
+  rpc RestoreSnapshot(RestoreSnapshotRequest) returns (RestoreSnapshotResponse);
+
+  // ---- Streaming ----
+  rpc WatchEvents(WatchMachineEventsRequest)   returns (stream MachineEvent);
+  rpc Console    (stream ConsoleClientMessage) returns (stream ConsoleServerMessage);
+  rpc Exec       (stream ExecClientMessage)    returns (stream ExecServerMessage);
+}
+
+// ---- Requests / responses ----
+
+message CreateMachineRequest         { MachineConfig config = 1; }
+
+message ListMachinesRequest          {}
+message ListMachinesResponse         { repeated Machine machines = 1; }
+
+message GetMachineRequest            { string machine_id = 1; }
+
+message ApplyMachineConfigRequest {
+  string        machine_id = 1;
+  MachineConfig config     = 2;
+}
+
+message DeleteMachineRequest         { string machine_id = 1; }
+message DeleteMachineResponse        {}
+
+message StartMachineRequest          { string machine_id = 1; }
+message StartMachineResponse         {}
+
+message StopMachineRequest {
+  string machine_id = 1;
+  bool   force      = 2;  // default false; true skips ACPI graceful path
+}
+message StopMachineResponse          {}
+
+message PauseMachineRequest          { string machine_id = 1; }
+message PauseMachineResponse         {}
+
+message ResumeMachineRequest         { string machine_id = 1; }
+message ResumeMachineResponse        {}
+
+message PressPowerButtonRequest      { string machine_id = 1; }
+message PressPowerButtonResponse     {}
+
+message TakeSnapshotRequest {
+  string machine_id = 1;
+  string path       = 2;  // absolute host path; parent dir must exist & be writable
+}
+
+message RestoreSnapshotRequest {
+  string machine_id = 1;
+  string path       = 2;  // absolute host path; valid snapshot file for this backend
+}
+message RestoreSnapshotResponse      {}
+
+message WatchMachineEventsRequest    { string machine_id = 1; }
